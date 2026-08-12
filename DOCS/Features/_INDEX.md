@@ -22,8 +22,7 @@ This is the single source of truth for all feature work. Agents must check this 
 
 | ID | Feature | Status | Agent | Feature Doc |
 |----|---------|--------|-------|-------------|
-| F-001 | [Feature Name] | `PLANNED` | — | [F-001.md](F-001.md) |
-| F-002 | [Feature Name] | `IN_PROGRESS` | Claude Code | [F-002.md](F-002.md) |
+| F-001 | `.ods` seçiminden DXF tablo bloğu üretimi | `PLANNED` | — | [F-001.md](F-001.md) |
 
 ---
 
