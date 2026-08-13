@@ -2,50 +2,59 @@
 
 Registry of all test suites. Update this when adding or removing test files.
 
+Toplam: **168 test**, tamamı geçiyor (2026-08-13).
+
 ---
 
 ## Unit Tests
 
 | Suite | File | Covers | Status |
 |-------|------|--------|--------|
-| UserService | `tests/unit/services/user-service.test.ts` | create, update, delete, findById | ✅ |
-| CommandManager | `tests/unit/commands/command-manager.test.ts` | execute, undo, redo, capacity | ✅ |
-| [Add rows as suites are created] | | | |
+| Ayrıştırma | `tests/unit/test_parsing.py` | cm/inç/pt → mm, renk, kenarlık kısayolu, `A1:B2` aralığı, sütun harfleri | ✅ |
+| Ölçüm | `tests/unit/test_metrics.py` | TTF genişlik ölçümü, cap height, sığdı/sığmadı sınırları, eksik font/glif | ✅ |
+| Okuyucu | `tests/unit/test_ods_reader.py` | gizli satır/sütun, birleştirme + `covered`, görünen metin, hata kataloğu, `SRC_STALE` | ✅ |
+| Geometri | `tests/unit/test_geometry.py` | kenar tekilleştirme, eş doğrultulu birleştirme, birleşik alan iç ızgarası, hizalama, taşma modları, determinizm | ✅ |
+| CLI | `tests/unit/test_cli.py` | bayrak > config > varsayılan önceliği, DXF sürüm doğrulaması, font çözümü, çıkış kodları | ✅ |
 
 ## Integration Tests
 
 | Suite | File | Covers | Requires |
 |-------|------|--------|----------|
-| UserRepository | `tests/integration/repositories/user-repo.test.ts` | CRUD via real DB | Local DB |
-| POST /users | `tests/integration/handlers/create-user.test.ts` | Full request cycle | Local server |
-| [Add rows as suites are created] | | | |
+| Uçtan uca hat | `tests/integration/test_pipeline.py` | referans `.ods` → DXF → `ezdxf` geri okuma (golden): blok adı, katman dağılımı, koordinatlar, metin içerikleri, `$INSUNITS`, Kiril/CJK, determinizm, hata yolunda dosya bırakmama | `NotoSans-Regular.ttf` |
+
+Harici altyapı yok — DB, sunucu ya da ağ gerekmez. Font sistemde yoksa ölçüme dayanan testler
+`skip` olur (bkz. `tests/conftest.py::font_path`).
 
 ## E2E Tests
 
-| Flow | File | Critical Path |
-|------|------|---------------|
-| [Create and edit a record] | `tests/e2e/flows/create-edit.e2e.ts` | ✅ |
-| [Add rows as flows are created] | | |
+Ayrı bir E2E katmanı yok: araç tek atımlık bir CLI, integration testleri zaten `main()` üzerinden
+gerçek dosya üretip geri okuyor.
+
+---
+
+## Fixtures
+
+Referans `.ods` depoya **ikili dosya olarak girmez**; `tests/fixtures/ods_builder.py` ile kod
+olarak üretilir (`tests/conftest.py::reference_spec`). Golden testin neyi doğruladığı diff'te
+görünür ve sayfayı değiştirmek için LibreOffice açmak gerekmez.
+
+Referans sayfa — `Mahal`, seçim `B2:E7`: başlık satırı (dolgu + kalın alt kenarlık), dikey
+birleştirme `B3:B4`, yatay birleştirme `C4:D4`, gizli `D` sütunu, gizli 5. satır, taşan bir hücre
+ve sonda kenarlıklı boş bir satır.
 
 ---
 
 ## Running Tests
 
 ```bash
-# All tests
-npm test
+# Tümü
+.venv/Scripts/python.exe -m pytest
 
-# Unit only (fast, no infrastructure)
-npm run test:unit
+# Yalnızca birim testler (hızlı)
+.venv/Scripts/python.exe -m pytest tests/unit -q
 
-# Integration (requires local DB)
-npm run test:integration
-
-# E2E (requires full local stack)
-npm run test:e2e
-
-# Coverage report
-npm run test:coverage
+# Tek bir dosya
+.venv/Scripts/python.exe -m pytest tests/unit/test_geometry.py -q
 ```
 
 ---
@@ -54,4 +63,5 @@ npm run test:coverage
 
 | Test | Reason Skipped | Owner | Deadline |
 |------|---------------|-------|----------|
-| [test name] | [reason] | [agent/human] | YYYY-MM-DD |
+| Görsel doğruluk | CI'da test edilemez — F-001 → Manual Verification'da AutoCAD adımı olarak duruyor | insan | — |
+| Blok yeniden tanımlama | AutoCAD gerektirir; F-001 Open Questions'ta açık madde | insan | — |

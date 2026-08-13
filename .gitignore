@@ -7,6 +7,11 @@ __pycache__/
 *.pyo
 .Python
 pip-log.txt
+*.egg-info/
+
+# Araç çıktıları (üretilen tablolar depoya girmez)
+*.report.txt
+tabletodxf.toml
 
 # Build outputs
 dist/

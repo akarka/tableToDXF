@@ -1,0 +1,33 @@
+# tabletodxf config örneği.
+#
+# Kullanmak için `tabletodxf.toml` adıyla çalışma dizinine kopyalayın; araç onu
+# kendiliğinden bulur. Başka bir yol için `--config` kullanın.
+#
+# Öncelik: CLI bayrağı > bu dosya > yerleşik varsayılan.
+#
+# Config yüzeyi kasıtlı olarak küçüktür. Görünümle ilgili her şey `.ods`'ten
+# gelir (ADR-002); buraya yalnızca formatın taşıyamadığı şeyler girer.
+
+# 1 cm kaç çizim birimi. Ofis standardı 1 birim = 1 mm ise 10.0 doğrudur.
+scale_cm_to_units = 10.0
+
+# R2013 ve üstü. Daha eskisi TTF metin stilini taşıyamaz (Kiril/CJK bozulur).
+dxf_version = "R2013"
+
+# Hücreye sığmayan metin ne olsun:
+#   "mtext"  → tanımlı genişliği hücrenin metin alanına eşit MTEXT kutusu;
+#              AutoCAD'de genişlik tutamağıyla düzeltilebilir (varsayılan)
+#   "marker" → hücreyi dolduran ###
+#   "full"   → metnin tamamı yazılır, hücre sınırını taşar
+# Üç mod da _OVERFLOW katmanını kullanır; hiçbirinde kırpma yapılmaz.
+overflow = "mtext"
+
+[text]
+# Hedef çizimdeki aynı adlı bir stil bunu sessizce ezmesin diye tekil bir ad.
+style_name = "ONCU_TBL_TEXT"
+# Tam yol da verilebilir. Hedef AutoCAD makinesinde de kurulu olmalı.
+font_file = "NotoSans-Regular.ttf"
+
+[layers]
+# Katmanlar işlev taşır, stil değil: _GRID, _TEXT, _FILL, _OVERFLOW.
+prefix = "ONCU_TBL"
