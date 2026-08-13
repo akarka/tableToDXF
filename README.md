@@ -129,7 +129,7 @@ gösterebilirsiniz.
 
 | Katman | İçerik |
 |---|---|
-| `<prefix>_GRID` | Tüm kenarlık çizgileri. Kalınlık varlık üzerinde (ByObject) |
+| `<prefix>_GRID` | Tüm kenarlık çizgileri. Kalınlık polyline global width'i ile (gerçek geometri) |
 | `<prefix>_TEXT` | Hücre metinleri |
 | `<prefix>_FILL` | Opak beyaz zemin + arka plan dolguları (düz desenli `HATCH`) |
 | `<prefix>_OVERFLOW` | Yalnızca taşan hücreler. **Boş katman = çizimde hiç taşma yok** |
@@ -172,14 +172,18 @@ DXF hem `--block` adlı blok tanımını hem de bu bloğun origin'e yerleştiril
 içerir; böylece dosya doğrudan açıldığında tablo görünür. `$INSUNITS = 0` yazılır — hedef çizime
 eklerken otomatik ölçekleme devreye girmez.
 
-Tablonun dış sınırında tek tip bir **çerçeve** döner. Çerçeve ayrı bir dikdörtgen değildir: var
-olan dış ızgara parçalarının kalınlığı yükseltilir, dolayısıyla arkadaki zemin `HATCH`'inin
-sınırıyla **birebir çakışır** — ofset yok, çakışık çift çizgi yok. Tek tip olduğu için dört
-çizgiye birleşir (üst, alt, sol, sağ).
+Tablonun dış sınırında tek **kapalı** polyline'dan bir **çerçeve** döner. Kalınlık,
+polyline'ın global genişliğidir (gerçek geometri); ekseni tablo sınırından `width/2` kadar
+**dışarı** kaydırılmıştır. AutoCAD genişliği eksenden iki yana açtığı için bu şart: eksen tam
+sınırda olsaydı bandın yarısı tablonun içine düşer, ilk hücrelerin kenarlığını ve metnini
+örterdi. Böylece bandın **iç kenarı** tam tablo sınırına — arkadaki zemin `HATCH`'inin
+sınırına — oturur; çerçeve içeri yemez, dışarı büyür. Kapalı polyline olması köşelerin
+gönyeli birleşmesini sağlar.
 
-Kalınlık `max(--frame, sınırda sayfanın koyduğu en kalın kenarlık)`: çerçeve bir taban getirir,
-sayfadaki bir vurguyu asla inceltmez. Rengi de sınırdaki en kalın kenarlığın rengidir, sayfada hiç
-kenarlık yoksa siyah. `--frame 0` ile kapatılır ve dış sınır tamamen sayfadan gelir.
+Sınırdaki hücre kenarlıkları çizilmez, yerlerini çerçeve alır — ikisi birden çizilseydi
+sınırda çakışık çift çizgi olurdu. Kalınlık `max(--frame, sınırda sayfanın koyduğu en kalın
+kenarlık)`: çerçeve bir taban getirir, sayfadaki vurguyu asla inceltmez. `--frame 0` ile
+kapatılır ve dış sınır tamamen sayfadan gelir.
 
 Bloğun en arkasında, seçimin tamamını kaplayan **opak beyaz bir zemin** vardır. Calc'ta "dolgu yok"
 olan hücre ekranda beyaz görünür, saydam değil; zemin olmadan o hücreler çizimde altlarındaki
@@ -205,7 +209,7 @@ düzeltirsiniz; araç sessizce kaymış bir tablo üretmez.
 ## Geliştirme
 
 ```bash
-.venv/Scripts/python.exe -m pytest          # 252 test
+.venv/Scripts/python.exe -m pytest          # 245 test
 .venv/Scripts/python.exe -m pytest tests/unit -q
 ```
 
@@ -244,3 +248,7 @@ errors.py       → hata kataloğu
 - **CJK için CJK kapsayan bir font gerekir.** Varsayılan `NotoSans-Regular.ttf` Kiril içerir,
   CJK içermez — CJK tablolarda `--font` ile uygun bir TTF verin.
 - **`double` / `dashed` kenarlıklar tek düz çizgiye iner**; kalınlık ve renk korunur.
+- **Çok ince kenarlıklar gerçek genişlik olarak neredeyse görünmez.** Kalınlık `lineweight`
+  ile değil polyline global width'i ile taşınıyor; sayfadaki `0.06pt` (0.021 mm) çizim
+  biriminde de 0.021 kalır ve saç teli gibi görünür. Kalınlaştırmak için Calc'ta kenarlığı
+  kalınlaştırmak gerekir — araç kaynağı düzeltmez, yansıtır (ADR-002).

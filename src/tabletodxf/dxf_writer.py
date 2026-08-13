@@ -20,15 +20,9 @@ from ezdxf.enums import TextEntityAlignment
 from ezdxf.lldxf import const
 
 from .config import LayerConfig, OutputConfig, TextConfig
-from .geometry import BorderLine, Drawing, FillShape, TextBox, TextItem
+from .geometry import BorderLine, Drawing, FillShape, FrameBox, TextBox, TextItem
 from .model import HAlign, Rgb, VAlign
 from .report import Report
-
-# DXF `lineweight` 1/100 mm cinsindendir ve yalnızca sabit bir değer kümesini
-# kabul eder; ara değerler dosyayı geçersiz kılar.
-_VALID_LINEWEIGHTS = sorted(
-    value for value in const.VALID_DXF_LINEWEIGHT_VALUES if value > 0
-)
 
 _ALIGN_MAP: dict[HAlign, TextEntityAlignment] = {
     "left": TextEntityAlignment.LEFT,
@@ -70,17 +64,6 @@ def layer_names(prefix: str) -> dict[str, str]:
     duruyor.
     """
     return LayerConfig(prefix=prefix).names()
-
-
-def snap_lineweight(width_mm: float) -> int:
-    """mm → en yakın geçerli DXF lineweight (1/100 mm).
-
-    Sayfadan gelen kalınlıklar (`0.06pt`, `0.5pt`, `2.5pt` …) DXF'in kümesine
-    düşmez; en yakın geçerli değere yuvarlanır. 0'a yuvarlanmaz — kaynakta
-    görünür olan bir kenarlık çizimde de görünür kalmalı.
-    """
-    hundredths = width_mm * 100.0
-    return min(_VALID_LINEWEIGHTS, key=lambda valid: abs(valid - hundredths))
 
 
 def write(
@@ -128,6 +111,8 @@ def write(
         _add_fill(block, fill, layers["fill"])
     for line in drawing.lines:
         _add_line(block, line, layers["grid"])
+    if drawing.frame is not None:
+        _add_frame(block, drawing.frame, layers["grid"])
     for text in drawing.texts:
         _add_text(block, text, layers["text"], text_style, use_true_color=True)
     for marker in drawing.markers:
@@ -183,15 +168,23 @@ def _add_fill(block, fill: FillShape, layer: str) -> None:  # noqa: ANN001
 
 
 def _add_line(block, line: BorderLine, layer: str) -> None:  # noqa: ANN001
-    """Kalınlık varlık üzerinde (ByObject) — kenar başına değiştiği için BYLAYER
-    olamaz (ADR-002)."""
+    """Kalınlık polyline'ın **global genişliğiyle** taşınır, `lineweight` ile değil.
+
+    `lineweight` bir görüntüleme/çizdirme niteliğidir: `LWDISPLAY` kapalıysa
+    ekranda görünmez ve baskıda CTB/STB kalem tablosu onu ezebilir. Global
+    genişlik ise gerçek geometridir — her zoom'da görünür, her kalem tablosunda
+    aynı basar. Sayfadaki kalınlık hiyerarşisi (başlık altı kalın, ızgara ince)
+    böylece çizimde birebir korunur (ADR-002).
+
+    `lineweight` bilinçli olarak hiç yazılmıyor; BYLAYER varsayılanında kalıyor.
+    """
     block.add_lwpolyline(
         [line.start, line.end],
         format="xy",
         dxfattribs={
             "layer": layer,
             "true_color": _true_color(line.color),
-            "lineweight": snap_lineweight(line.width_mm),
+            "const_width": line.width,
         },
     )
 
@@ -220,6 +213,24 @@ def _add_text(
         # DXF `rotation` da saat yönünün tersine derece — `.ods`'in
         # `style:rotation-angle` ile aynı yön ve birim, çevirme gerekmiyor.
         entity.dxf.rotation = item.rotation_deg
+
+
+def _add_frame(block, frame: FrameBox, layer: str) -> None:  # noqa: ANN001
+    """Dış çerçeve — tek **kapalı** `LWPOLYLINE`.
+
+    Kapalı olması köşelerin gönyeli birleşmesini sağlar; dört ayrı çizgide
+    genişlik eksen çizgisinden açıldığı için köşelerde çentik kalırdı.
+    """
+    block.add_lwpolyline(
+        frame.corners,
+        format="xy",
+        close=True,
+        dxfattribs={
+            "layer": layer,
+            "true_color": _true_color(frame.color),
+            "const_width": frame.width,
+        },
+    )
 
 
 def _add_mtext(block, box: TextBox, layer: str, text_style: str) -> None:  # noqa: ANN001

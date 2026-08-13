@@ -122,7 +122,7 @@ def test_thicker_edge_wins_on_conflict(metrics, report) -> None:  # noqa: ANN001
     drawing = build(model, metrics, report)
     verticals = [line for line in drawing.lines if line.start[0] == line.end[0]]
     assert len(verticals) == 1
-    assert verticals[0].width_mm == THICK.width_mm
+    assert verticals[0].width == THICK.width_mm
 
 
 def test_collinear_segments_merge_into_one_line(metrics, report) -> None:  # noqa: ANN001
@@ -261,30 +261,62 @@ def test_frame_wraps_the_table_even_without_sheet_borders(metrics, report) -> No
     """Sayfada hiç kenarlık yoksa bile tablonun sınırı belli olmalı."""
     drawing = build(make_model(2, 3, []), metrics, report, frame_mm=0.35)
 
-    assert len(drawing.lines) == 4  # üst, alt, sol, sağ
-    assert all(line.width_mm == pytest.approx(0.35) for line in drawing.lines)
-
-    horizontals = sorted(l.start[1] for l in drawing.lines if l.start[1] == l.end[1])
-    verticals = sorted(l.start[0] for l in drawing.lines if l.start[0] == l.end[0])
-    assert horizontals == pytest.approx([-10.0, 0.0])  # 2 satır × 5 mm
-    assert verticals == pytest.approx([0.0, 30.0])  # 3 sütun × 10 mm
+    assert drawing.lines == []  # ızgara yok, yalnızca çerçeve
+    assert drawing.frame is not None
+    assert drawing.frame.width == pytest.approx(0.35)
 
 
-def test_frame_merges_into_four_lines_not_per_cell_segments(metrics, report) -> None:  # noqa: ANN001
-    """Tek tip kalınlık, eş doğrultulu birleştirmenin çerçeveyi toplamasını sağlar."""
+def test_frame_inner_edge_sits_exactly_on_the_table_boundary(metrics, report) -> None:  # noqa: ANN001
+    """Asıl kural: bant dışarı büyür, tablodan içeri yemez.
+
+    AutoCAD genişliği eksen çizgisinden iki yana açtığı için eksen sınırdan
+    `width/2` dışarı kaydırılır. Eksen tam sınırda olsaydı bandın yarısı ilk
+    hücrelerin kenarlığını ve metnini örterdi.
+    """
+    drawing = build(make_model(2, 3, []), metrics, report, frame_mm=1.0)
+    frame = drawing.frame
+    assert frame is not None
+
+    half = frame.width / 2.0
+    (left, top), _, (right, bottom), _ = frame.corners
+
+    # Eksen dışarıda...
+    assert (left, top) == pytest.approx((-half, half))
+    assert (right, bottom) == pytest.approx((30.0 + half, -10.0 - half))
+    # ...ama iç kenar tam tablo sınırında: 3 sütun × 10 mm, 2 satır × 5 mm.
+    assert (left + half, top - half) == pytest.approx((0.0, 0.0))
+    assert (right - half, bottom + half) == pytest.approx((30.0, -10.0))
+
+
+def test_frame_is_a_single_closed_box_not_four_lines(metrics, report) -> None:  # noqa: ANN001
+    """Tek kapalı kutu: köşeler gönyeli birleşsin, çentik kalmasın."""
     drawing = build(make_model(5, 5, []), metrics, report, frame_mm=0.35)
-    assert len(drawing.lines) == 4
+    assert drawing.frame is not None
+    assert len(drawing.frame.corners) == 4
+    assert drawing.lines == []
+
+
+def test_frame_replaces_the_boundary_edges(metrics, report) -> None:  # noqa: ANN001
+    """Sınır parçaları silinir; yoksa çerçeveyle çakışık çift çizgi olurdu."""
+    all_sides = Borders(left=THIN, right=THIN, top=THIN, bottom=THIN)
+    model = make_model(1, 1, [Cell(row=0, col=0, text="", borders=all_sides)])
+
+    without = build(model, metrics, report, frame_mm=0.0)
+    with_frame = build(model, metrics, report, frame_mm=0.9)
+
+    assert len(without.lines) == 4  # çerçeve yokken sınır çizgileri duruyor
+    assert with_frame.lines == []  # çerçeve varken sınır çizgileri yok
+    assert with_frame.frame is not None
 
 
 def test_frame_never_thins_a_heavier_sheet_border(metrics, report) -> None:  # noqa: ANN001
     """Sayfanın koyduğu vurgu çerçeve yüzünden kaybolmamalı."""
     heavy = Border(1.2, (0, 0, 0))
-    model = make_model(
-        1, 1, [Cell(row=0, col=0, text="", borders=Borders(top=heavy))]
-    )
+    model = make_model(1, 1, [Cell(row=0, col=0, text="", borders=Borders(top=heavy))])
     drawing = build(model, metrics, report, frame_mm=0.35)
 
-    assert all(line.width_mm == pytest.approx(1.2) for line in drawing.lines)
+    assert drawing.frame is not None
+    assert drawing.frame.width == pytest.approx(1.2)
 
 
 def test_frame_takes_the_colour_of_the_heaviest_boundary_border(metrics, report) -> None:  # noqa: ANN001
@@ -292,11 +324,12 @@ def test_frame_takes_the_colour_of_the_heaviest_boundary_border(metrics, report)
         1, 1, [Cell(row=0, col=0, text="", borders=Borders(top=Border(1.2, (255, 0, 0))))]
     )
     drawing = build(model, metrics, report, frame_mm=0.35)
-    assert all(line.color == (255, 0, 0) for line in drawing.lines)
+    assert drawing.frame is not None
+    assert drawing.frame.color == (255, 0, 0)
 
 
 def test_frame_does_not_touch_interior_grid_lines(metrics, report) -> None:  # noqa: ANN001
-    """Çerçeve yalnızca dış sınırı yükseltir; iç ızgara sayfadan geldiği gibi kalır."""
+    """Çerçeve yalnızca dış sınırı devralır; iç ızgara sayfadan geldiği gibi kalır."""
     cells = [
         Cell(row=r, col=c, text="", borders=Borders(left=THIN, top=THIN))
         for r in range(2)
@@ -304,23 +337,29 @@ def test_frame_does_not_touch_interior_grid_lines(metrics, report) -> None:  # n
     ]
     drawing = build(make_model(2, 2, cells), metrics, report, frame_mm=0.9)
 
-    interior = [line for line in drawing.lines if line.width_mm == pytest.approx(THIN.width_mm)]
-    assert interior  # iç çizgiler inceliğini korudu
-    assert all(line.width_mm == pytest.approx(0.9) for line in drawing.lines if line not in interior)
+    assert drawing.lines  # iç çizgiler duruyor
+    assert all(line.width == pytest.approx(THIN.width_mm) for line in drawing.lines)
+    assert drawing.frame is not None
+    assert drawing.frame.width == pytest.approx(0.9)
+
+
+def test_frame_width_scales_with_the_drawing(metrics, report) -> None:  # noqa: ANN001
+    normal = build(make_model(2, 2, []), metrics, report, frame_mm=0.5)
+    big = build(make_model(2, 2, []), metrics, report, frame_mm=0.5, scale_cm_to_units=20.0)
+    assert big.frame.width == pytest.approx(normal.frame.width * 2)
 
 
 def test_frame_can_be_disabled(metrics, report) -> None:  # noqa: ANN001
-    assert build(make_model(2, 2, []), metrics, report, frame_mm=0.0).lines == []
+    drawing = build(make_model(2, 2, []), metrics, report, frame_mm=0.0)
+    assert drawing.frame is None
+    assert drawing.lines == []
 
 
 def test_frame_is_on_by_default(metrics, report) -> None:  # noqa: ANN001
     """Yerel `build` yardımcısını atlayarak gerçek varsayılanı sınar."""
     drawing = geometry.build(make_model(2, 2, []), metrics, report)
-    assert len(drawing.lines) == 4
-    assert all(
-        line.width_mm == pytest.approx(LayoutConfig().frame_mm)
-        for line in drawing.lines
-    )
+    assert drawing.frame is not None
+    assert drawing.frame.width == pytest.approx(LayoutConfig().frame_mm)
 
 
 # ── Dolgular ────────────────────────────────────────────────────────────────
@@ -433,13 +472,34 @@ def test_fitting_text_produces_no_warning(metrics, report) -> None:  # noqa: ANN
 # ── Kaydırma (wrap) ─────────────────────────────────────────────────────────
 
 
-def test_wrapped_cell_never_gets_a_marker(metrics, report) -> None:  # noqa: ANN001
-    """Kaydırma zaten sığdırma yöntemi; `###` onu görünmez kılardı."""
-    model = make_model(1, 1, [_text_cell(LONG, wrap=True)])
+def test_wrapped_cell_that_fits_after_wrapping_gets_no_marker(metrics, report) -> None:  # noqa: ANN001
+    """Kaydırma sığdırdıysa taşma yoktur; işaret de olmaz."""
+    model = make_model(1, 1, [_text_cell("bir iki uc dort", wrap=True)])
     drawing = build(model, metrics, report, overflow="marker")
 
     assert drawing.markers == []
     assert len(drawing.texts) > 1  # birden çok satıra bölündü
+    # Taşma uyarısı yok. (Satır yüksekliği uyarısı olabilir — test hücresi
+    # kasten alçak; o ayrı bir tanı.)
+    assert not any("text overflow" in line for line in report.lines)
+
+
+def test_wrapped_cell_still_overflowing_does_get_a_marker(metrics, report) -> None:  # noqa: ANN001
+    """`overflowed` kaydırmadan **sonra** hesaplanır.
+
+    Buraya düşen hücre kaydırmaya rağmen sığmıyor demektir (bölünemeyen uzun
+    kelime); kullanıcı `marker` istediyse `###` görmeli. Bu muafiyet önceden
+    vardı ve `marker` modunu kaydırmalı sayfalarda `full` ile aynı yapıyordu.
+    """
+    model = make_model(
+        1, 1, [_text_cell("Kahramanmaraslilastiramadiklarimizdan", wrap=True)]
+    )
+    drawing = build(model, metrics, report, overflow="marker")
+
+    assert len(drawing.markers) == 1
+    assert set(drawing.markers[0].text) == {"#"}
+    assert drawing.texts == []
+    assert any("mode=marker" in line for line in report.lines)
 
 
 def test_wrap_breaks_on_word_boundaries(metrics, report) -> None:  # noqa: ANN001
@@ -466,15 +526,17 @@ def test_wrapped_lines_stack_downward(metrics, report) -> None:  # noqa: ANN001
     assert ys == sorted(ys, reverse=True)
 
 
-def test_unbreakable_word_overflows_instead_of_becoming_hashes(metrics, report) -> None:  # noqa: ANN001
-    """Tek başına sığmayan kelime taşar — metni yazmak `###`ten bilgilendirici."""
+def test_unbreakable_word_overflows_in_full_mode(metrics, report) -> None:  # noqa: ANN001
+    """`full` modunda tek başına sığmayan kelime kırpılmadan taşar."""
     model = make_model(1, 1, [_text_cell("Kahramanmaraşlılaştıramadıklarımızdan", wrap=True)])
-    drawing = build(model, metrics, report, overflow="marker")
+    drawing = build(model, metrics, report, overflow="full")
 
     assert drawing.markers == []
     assert [item.text for item in drawing.texts] == [
         "Kahramanmaraşlılaştıramadıklarımızdan"
     ]
+    assert any("mode=full" in line for line in report.lines)
+    assert any("wrap=yes" in line for line in report.lines)
 
 
 def test_wrap_off_still_produces_markers(metrics, report) -> None:  # noqa: ANN001

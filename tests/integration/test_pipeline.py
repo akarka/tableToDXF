@@ -101,6 +101,15 @@ def test_entities_land_on_the_right_layers(generated) -> None:  # noqa: ANN001
     )
 
 
+def _frame_and_grid(doc):  # noqa: ANN001, ANN202
+    """Çerçeve tek **kapalı** polyline; ızgara çizgileri açık iki noktalı."""
+    lines = [e for e in doc.blocks.get(BLOCK) if e.dxftype() == "LWPOLYLINE"]
+    frame = [e for e in lines if e.closed]
+    grid = [e for e in lines if not e.closed]
+    assert len(frame) <= 1
+    return (frame[0] if frame else None), grid
+
+
 def _hatch_corners(hatch) -> tuple:  # noqa: ANN001
     return tuple((round(v[0], 3), round(v[1], 3)) for v in hatch.paths.paths[0].vertices)
 
@@ -253,12 +262,8 @@ def test_cell_texts_match_the_sheet(generated) -> None:  # noqa: ANN001
 def test_grid_spans_the_full_selection_width(generated) -> None:  # noqa: ANN001
     """30 + 50 + 25 mm, 1 cm = 10 birim → 105 birim (gizli D sütunu düşmüş hâliyle)."""
     _, doc = generated
-    xs = [
-        point[0]
-        for e in doc.blocks.get(BLOCK)
-        if e.dxftype() == "LWPOLYLINE"
-        for point in e.get_points("xy")
-    ]
+    _, grid = _frame_and_grid(doc)
+    xs = [point[0] for e in grid for point in e.get_points("xy")]
     assert min(xs) == pytest.approx(0.0)
     assert max(xs) == pytest.approx(105.0)
 
@@ -266,13 +271,11 @@ def test_grid_spans_the_full_selection_width(generated) -> None:  # noqa: ANN001
 def test_geometry_extends_to_the_trailing_empty_row(generated) -> None:  # noqa: ANN001
     """AC-5: 6.0 + 4.5×4 mm = 24 mm → -24 birim; boş son satır kırpılmamış."""
     _, doc = generated
-    ys = [
-        point[1]
-        for e in doc.blocks.get(BLOCK)
-        if e.dxftype() == "LWPOLYLINE"
-        for point in e.get_points("xy")
-    ]
+    frame, grid = _frame_and_grid(doc)
+    # Izgara sinira kadar iner; cerceve bandi disariya tasar.
+    ys = [point[1] for e in grid for point in e.get_points("xy")]
     assert min(ys) == pytest.approx(-24.0)
+    assert frame is not None
 
 
 def test_header_bottom_border_is_heavier_than_the_inner_grid(generated) -> None:  # noqa: ANN001
@@ -282,18 +285,64 @@ def test_header_bottom_border_is_heavier_than_the_inner_grid(generated) -> None:
     tablonun en kalın çizgileri artık çerçevenin kendisi.
     """
     _, doc = generated
-    lines = [e for e in doc.blocks.get(BLOCK) if e.dxftype() == "LWPOLYLINE"]
+    _, grid = _frame_and_grid(doc)
 
     def ys(entity) -> set[float]:  # noqa: ANN001
         return {round(point[1], 3) for point in entity.get_points("xy")}
 
-    boundary_ys = {0.0, -24.0}
-    header_bottom = [e for e in lines if ys(e) == {-6.0}]
-    inner = [e for e in lines if not (ys(e) & boundary_ys) and e not in header_bottom]
+    header_bottom = [e for e in grid if ys(e) == {-6.0}]
+    inner = [e for e in grid if e not in header_bottom]
 
     assert header_bottom
     assert inner
-    assert header_bottom[0].dxf.lineweight > max(e.dxf.lineweight for e in inner)
+    assert header_bottom[0].dxf.const_width > max(e.dxf.const_width for e in inner)
+
+
+def test_no_entity_carries_an_explicit_lineweight(generated) -> None:  # noqa: ANN001
+    """Kalınlık global width ile taşınır; `lineweight` hiç yazılmaz.
+
+    `lineweight` görüntülemeye ve kalem tablosuna bağlı; global width gerçek
+    geometri. İkisini birden yazmak, hangisinin geçerli olduğunu izleyiciye
+    bırakırdı.
+    """
+    _, doc = generated
+    lines = [e for e in doc.blocks.get(BLOCK) if e.dxftype() == "LWPOLYLINE"]
+    assert lines
+    # -1 = BYLAYER, yani hic yazilmamis.
+    assert all(e.dxf.lineweight == -1 for e in lines)
+    assert all(e.dxf.const_width > 0 for e in lines)
+
+
+def test_border_width_matches_the_sheet_in_drawing_units(generated) -> None:  # noqa: ANN001
+    """Sayfadaki 0.06pt ve 0.5pt, ölçek 10'da birebir mm karşılığına düşer."""
+    _, doc = generated
+    lines = [e for e in doc.blocks.get(BLOCK) if e.dxftype() == "LWPOLYLINE"]
+
+    thin_mm = 0.06 * 25.4 / 72  # ince ızgara
+    widths = {round(e.dxf.const_width, 4) for e in lines}
+    assert round(thin_mm, 4) in widths
+
+
+def test_border_width_scales_with_the_drawing(
+    reference_ods: Path, tmp_path: Path
+) -> None:
+    """Kalınlık da bir uzunluk: tablo iki katına çıkınca çizgiler de çıkar.
+
+    Aksi hâlde büyük ölçekli bir tabloda çizgiler orantısal olarak incelirdi.
+    """
+    normal, big = tmp_path / "n.dxf", tmp_path / "b.dxf"
+    assert run_cli(reference_ods, normal) == EXIT_OK
+    assert run_cli(reference_ods, big, "--scale", "20") == EXIT_OK
+
+    def widest(path: Path) -> float:
+        doc = ezdxf.readfile(str(path))
+        return max(
+            e.dxf.const_width
+            for e in doc.blocks.get(BLOCK)
+            if e.dxftype() == "LWPOLYLINE"
+        )
+
+    assert widest(big) == pytest.approx(widest(normal) * 2)
 
 
 def test_frame_traces_the_background_boundary_exactly(generated) -> None:  # noqa: ANN001
@@ -318,34 +367,32 @@ def test_frame_traces_the_background_boundary_exactly(generated) -> None:  # noq
     bottom = min(y for _, y in corners)
     top = max(y for _, y in corners)
 
-    expected = {
-        ((left, top), (right, top)),
-        ((left, bottom), (right, bottom)),
-        ((left, top), (left, bottom)),
-        ((right, top), (right, bottom)),
-    }
+    frame, _ = _frame_and_grid(doc)
+    assert frame is not None
 
-    def points(entity) -> tuple:  # noqa: ANN001
-        return tuple((round(x, 3), round(y, 3)) for x, y in entity.get_points("xy"))
+    half = frame.dxf.const_width / 2.0
+    axis = [(round(x, 3), round(y, 3)) for x, y in frame.get_points("xy")]
+    assert len(axis) == 4
+    assert frame.closed
 
-    lines = [e for e in block if e.dxftype() == "LWPOLYLINE"]
-    drawn = {points(e) for e in lines}
-    assert expected <= drawn
-
-    weights = {e.dxf.lineweight for e in lines if points(e) in expected}
-    assert len(weights) == 1  # çerçeve tek tip
+    # Eksen disarida; ic kenar tam zemin sinirinda.
+    inner_x = {round(x - half, 3) if x > 0 else round(x + half, 3) for x, _ in axis}
+    inner_y = {round(y + half, 3) if y < 0 else round(y - half, 3) for _, y in axis}
+    assert inner_x == {left, right}
+    assert inner_y == {bottom, top}
 
 
-def _top_edge_weight(path: Path) -> int:
+def _top_edge_weight(path: Path) -> float:
+    """Ust sinirin kalinligi: cerceve varsa cerceveden, yoksa izgaradan."""
     doc = ezdxf.readfile(str(path))
+    frame, grid = _frame_and_grid(doc)
+    if frame is not None:
+        return frame.dxf.const_width
     tops = [
-        e
-        for e in doc.blocks.get(BLOCK)
-        if e.dxftype() == "LWPOLYLINE"
-        and all(round(point[1], 3) == 0.0 for point in e.get_points("xy"))
+        e for e in grid if all(round(point[1], 3) == 0.0 for point in e.get_points("xy"))
     ]
     assert tops
-    return max(e.dxf.lineweight for e in tops)
+    return max(e.dxf.const_width for e in tops)
 
 
 def test_frame_can_be_switched_off(reference_ods: Path, tmp_path: Path) -> None:
@@ -366,14 +413,9 @@ def test_frame_width_is_configurable(reference_ods: Path, tmp_path: Path) -> Non
     assert run_cli(reference_ods, out, "--frame", "1.4") == EXIT_OK
 
     doc = ezdxf.readfile(str(out))
-    top = [
-        e
-        for e in doc.blocks.get(BLOCK)
-        if e.dxftype() == "LWPOLYLINE"
-        and all(round(point[1], 3) == 0.0 for point in e.get_points("xy"))
-    ]
-    assert top
-    assert top[0].dxf.lineweight == 140  # 1.4 mm → 1/100 mm
+    frame, _ = _frame_and_grid(doc)
+    assert frame is not None
+    assert frame.dxf.const_width == pytest.approx(1.4)  # mm → birim (olcek 10)
 
 
 # ── Kütüphane API'si ve ayar etkileri (F-002) ───────────────────────────────
@@ -594,7 +636,7 @@ def test_two_runs_produce_identical_geometry(reference_ods: Path, tmp_path: Path
                 geom = tuple(
                     (round(x, 6), round(y, 6)) for x, y in entity.get_points("xy")
                 )
-                extra = entity.dxf.lineweight
+                extra = round(entity.dxf.const_width, 6)
             elif kind == "TEXT":
                 anchor = (
                     entity.dxf.align_point if entity.dxf.halign else entity.dxf.insert
@@ -661,10 +703,6 @@ def test_scale_flag_changes_the_drawing_size(reference_ods: Path, tmp_path: Path
     assert run_cli(reference_ods, out, "--scale", "20") == EXIT_OK
 
     doc = ezdxf.readfile(str(out))
-    xs = [
-        point[0]
-        for e in doc.blocks.get(BLOCK)
-        if e.dxftype() == "LWPOLYLINE"
-        for point in e.get_points("xy")
-    ]
+    _, grid = _frame_and_grid(doc)
+    xs = [point[0] for e in grid for point in e.get_points("xy")]
     assert max(xs) == pytest.approx(210.0)  # 105 × 2

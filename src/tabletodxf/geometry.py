@@ -38,12 +38,18 @@ class FillShape:
 
 @dataclass(frozen=True)
 class BorderLine:
-    """Eş doğrultulu kenar parçalarının birleştirilmiş hâli — `LWPOLYLINE`."""
+    """Eş doğrultulu kenar parçalarının birleştirilmiş hâli — `LWPOLYLINE`.
+
+    `width` **çizim birimindedir**, mm değil: kalınlık DXF'te `lineweight` ile
+    değil polyline'ın global genişliğiyle taşınıyor, yani gerçek geometri.
+    Geometri olduğu için de tablonun geri kalanıyla aynı ölçek çarpanından
+    geçer — çevrim F-001 gereği yalnızca bu modülde yapılır.
+    """
 
     start: Point
     end: Point
     color: Rgb
-    width_mm: float
+    width: float
 
 
 @dataclass(frozen=True)
@@ -58,6 +64,24 @@ class TextItem:
     # DXF genişlik çarpanı (yatay ölçek). 1.0 = normal, <1.0 = sıkıştırılmış.
     width_factor: float = 1.0
     is_marker: bool = False
+
+
+@dataclass(frozen=True)
+class FrameBox:
+    """Tablonun dış çerçevesi — tek kapalı `LWPOLYLINE`.
+
+    `corners` **eksen çizgisidir**, görünen kenar değil. AutoCAD polyline
+    genişliğini eksen çizgisinden iki yana açtığı için eksen, tablo sınırından
+    `width/2` kadar **dışarı** kaydırılır; böylece bandın **iç kenarı** tam
+    tablo sınırına oturur ve çerçeve hücrelerden içeri yemez.
+
+    Dört ayrı çizgi yerine tek kapalı polyline: köşeler gönyeli birleşir,
+    ayrı çizgilerde kalan çentik oluşmaz.
+    """
+
+    corners: tuple[Point, Point, Point, Point]
+    color: Rgb
+    width: float
 
 
 @dataclass(frozen=True)
@@ -87,6 +111,7 @@ class Drawing:
     # onu ilk yazmasına bağlı — bunu veri modelinde görünür kılmak istiyoruz.
     background: FillShape | None = None
     fills: list[FillShape] = field(default_factory=list)
+    frame: FrameBox | None = None
     lines: list[BorderLine] = field(default_factory=list)
     texts: list[TextItem] = field(default_factory=list)
     markers: list[TextItem] = field(default_factory=list)
@@ -97,6 +122,7 @@ class Drawing:
     def entity_count(self) -> int:
         return (
             (1 if self.background is not None else 0)
+            + (1 if self.frame is not None else 0)
             + len(self.fills)
             + len(self.lines)
             + len(self.texts)
@@ -129,7 +155,9 @@ def build(
     if background.enabled:
         drawing.background = _background(model, xs, ys, background.color)
     _emit_fills(model, xs, ys, drawing)
-    _emit_borders(model, xs, ys, drawing, frame_mm=layout.frame_mm)
+    _emit_borders(
+        model, xs, ys, drawing, frame_mm=layout.frame_mm, units_per_mm=units_per_mm
+    )
     _emit_texts(
         model,
         xs,
@@ -271,41 +299,55 @@ def _frame_edge_keys(
     return horizontal, vertical
 
 
-def _apply_frame(
+def _extract_frame(
     horizontal: dict[tuple[int, int], Border],
     vertical: dict[tuple[int, int], Border],
     model: SheetModel,
     frame_mm: float,
-) -> None:
-    """Dış sınırı tek tip bir çerçeveye yükseltir.
+) -> Border | None:
+    """Dış sınır parçalarını kaldırır ve yerine geçecek çerçeveyi döndürür.
 
-    Ayrı bir dikdörtgen eklemek yerine **var olan sınır parçalarının** kalınlığı
-    değiştiriliyor: ayrı dikdörtgen, hücrelerin kendi dış kenarlıklarıyla birebir
-    aynı yere düşüp çakışık çift çizgi üretirdi.
+    Sınır parçaları **silinir**: çerçeve onların yerini alıyor, ikisi birden
+    çizilseydi sınırda çakışık çift çizgi olurdu.
 
     Kalınlık `max(frame_mm, sınırdaki en kalın mevcut kenarlık)` — çerçeve
     sayfanın koyduğu bir vurguyu asla inceltmez, yalnızca bir taban getirir.
-    Tek tip olması, eş doğrultulu birleştirmenin çerçeveyi dört çizgiye
-    indirmesini de sağlar.
+    Renk, sınırdaki en kalın kenarlığın rengi.
     """
     if frame_mm <= 0.0:
-        return
+        return None
 
     horizontal_keys, vertical_keys = _frame_edge_keys(model)
-    existing = [horizontal.get(key) for key in horizontal_keys]
-    existing += [vertical.get(key) for key in vertical_keys]
+    existing = [horizontal.pop(key, None) for key in horizontal_keys]
+    existing += [vertical.pop(key, None) for key in vertical_keys]
     present = [border for border in existing if border is not None and border.visible]
 
     heaviest = max(present, key=lambda border: border.width_mm, default=None)
-    frame = Border(
+    return Border(
         width_mm=max(frame_mm, heaviest.width_mm if heaviest else 0.0),
         color=heaviest.color if heaviest else BLACK,
     )
 
-    for key in horizontal_keys:
-        horizontal[key] = frame
-    for key in vertical_keys:
-        vertical[key] = frame
+
+def _frame_box(
+    border: Border, xs: list[float], ys: list[float], units_per_mm: float
+) -> FrameBox:
+    """Çerçeve ekseni, tablo sınırından `width/2` kadar **dışarı** kaydırılır.
+
+    AutoCAD polyline genişliğini eksen çizgisinden iki yana açar. Eksen tam
+    sınıra konsaydı bandın yarısı tablonun içine düşer, ilk hücrelerin
+    kenarlığını ve metnini örterdi. Dışarı kaydırınca bandın iç kenarı tam
+    sınıra oturur — zeminin sınırıyla aynı yere.
+    """
+    width = border.width_mm * units_per_mm
+    half = width / 2.0
+    left, right = xs[0] - half, xs[-1] + half
+    top, bottom = ys[0] + half, ys[-1] - half
+    return FrameBox(
+        corners=((left, top), (right, top), (right, bottom), (left, bottom)),
+        color=border.color,
+        width=width,
+    )
 
 
 def _emit_borders(
@@ -315,17 +357,22 @@ def _emit_borders(
     drawing: Drawing,
     *,
     frame_mm: float,
+    units_per_mm: float,
 ) -> None:
     horizontal, vertical = _collect_edges(model)
-    _apply_frame(horizontal, vertical, model, frame_mm)
+    frame_border = _extract_frame(horizontal, vertical, model, frame_mm)
+    if frame_border is not None and frame_border.visible:
+        drawing.frame = _frame_box(frame_border, xs, ys, units_per_mm)
 
+    # Kalınlık da bir uzunluk: tablonun geri kalanıyla aynı çarpandan geçer,
+    # böylece ölçek değişince çizgiler tabloyla orantılı kalır.
     for row, run_start, run_end, border in _merge_runs(horizontal):
         drawing.lines.append(
             BorderLine(
                 start=(xs[run_start], ys[row]),
                 end=(xs[run_end + 1], ys[row]),
                 color=border.color,
-                width_mm=border.width_mm,
+                width=border.width_mm * units_per_mm,
             )
         )
     for col, run_start, run_end, border in _merge_runs(vertical):
@@ -334,7 +381,7 @@ def _emit_borders(
                 start=(xs[col], ys[run_start]),
                 end=(xs[col], ys[run_end + 1]),
                 color=border.color,
-                width_mm=border.width_mm,
+                width=border.width_mm * units_per_mm,
             )
         )
 
@@ -415,10 +462,11 @@ def _emit_texts(
 
         use_box = overflowed and overflow.mode == "mtext"
         use_condense = overflowed and overflow.mode == "condense"
-        # Kaydırma açıkken işaret basılmaz: kaydırma zaten sığdırma yöntemidir,
-        # `###` onu görünmez kılardı. Geriye tek bir kelimenin satıra sığmadığı
-        # durum kalır; orada da metni yazmak `###`ten bilgilendiricidir.
-        use_marker = overflowed and overflow.mode == "marker" and not cell.wrap
+        # Kaydırmalı hücre de işaret alır. `overflowed` **kaydırmadan sonra**
+        # hesaplandığı için buraya düşen hücre gerçekten sığmıyor demektir;
+        # kullanıcı `marker` istediyse onu görmeli. (Önceki hâli kaydırmalı
+        # hücreleri muaf tutuyordu ve `marker` modunu `full` ile aynı yapıyordu.)
+        use_marker = overflowed and overflow.mode == "marker"
 
         # Tüm satırlara aynı çarpan uygulanır — en geniş satırdan türetilir.
         # Satır başına ayrı çarpan her satırı hücreyi doldurmaya zorlar ve
@@ -428,6 +476,9 @@ def _emit_texts(
             width_factor = max(overflow.min_width_factor, available_mm / widest_mm)
 
         if overflowed:
+            # Uygulanan mod raporlanır. Kaydırma ayrı bir alan: mod ile
+            # karıştırmak `full` modundaki kaydırmalı hücreyi `mode=wrap`
+            # gösteriyordu ve hangi davranışın uygulandığı okunamıyordu.
             if use_box:
                 mode = "mtext"
             elif use_condense:
@@ -435,8 +486,10 @@ def _emit_texts(
             elif use_marker:
                 mode = "marker"
             else:
-                mode = "wrap" if cell.wrap else "full"
+                mode = "full"
             extra: dict[str, object] = {}
+            if cell.wrap:
+                extra["wrap"] = "yes"
             if use_condense:
                 extra["width_factor"] = round(width_factor, 3)
                 # Tabana dayandıysak metin hâlâ taşıyor; sessizce geçilmemeli.
