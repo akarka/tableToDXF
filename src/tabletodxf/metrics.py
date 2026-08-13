@@ -40,7 +40,9 @@ class FontMetrics:
     _fallback_advance: int
 
     @classmethod
-    def from_file(cls, path: str | Path) -> FontMetrics:
+    def from_file(
+        cls, path: str | Path, *, fallback_cap_ratio: float = _FALLBACK_CAP_RATIO
+    ) -> FontMetrics:
         font_path = Path(path)
         if not font_path.is_file():
             raise TableToDxfError(
@@ -65,7 +67,7 @@ class FontMetrics:
                 detail=type(exc).__name__,
             ) from exc
 
-        cap_ratio = _FALLBACK_CAP_RATIO
+        cap_ratio = fallback_cap_ratio
         os2 = ttf.get("OS/2")
         cap_height = getattr(os2, "sCapHeight", 0) or 0
         if cap_height > 0:

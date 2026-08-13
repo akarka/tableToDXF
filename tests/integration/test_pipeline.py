@@ -376,6 +376,145 @@ def test_frame_width_is_configurable(reference_ods: Path, tmp_path: Path) -> Non
     assert top[0].dxf.lineweight == 140  # 1.4 mm → 1/100 mm
 
 
+# ── Kütüphane API'si ve ayar etkileri (F-002) ───────────────────────────────
+
+
+def test_library_api_produces_the_same_output_as_the_cli(
+    reference_ods: Path, tmp_path: Path
+) -> None:
+    """Suite ve UI bu yolu kullanacak; CLI ile ayrışmamalı (ADR-003)."""
+    from tabletodxf import Config, Job, convert
+
+    via_api = tmp_path / "api.dxf"
+    via_cli = tmp_path / "cli.dxf"
+
+    result = convert(
+        Job(
+            source=reference_ods,
+            sheet=REFERENCE_SHEET,
+            range_text=REFERENCE_RANGE,
+            out=via_api,
+            block=BLOCK,
+        ),
+        Config(),
+    )
+    assert run_cli(reference_ods, via_cli) == EXIT_OK
+
+    assert result.out_path == via_api
+    assert result.rows == 5 and result.cols == 3
+    assert result.warnings == 1  # taşan tek hücre
+
+    def entity_types(path: Path) -> Counter:
+        doc = ezdxf.readfile(str(path))
+        return Counter(
+            (e.dxftype(), e.dxf.layer) for e in doc.blocks.get(BLOCK)
+        )
+
+    assert entity_types(via_api) == entity_types(via_cli)
+
+
+def test_defaults_are_unchanged_by_the_config_layer(generated) -> None:  # noqa: ANN001
+    """AC-1: `Config()` bugünkü çıktıyı birebir korur.
+
+    Bu dosyadaki diğer testler zaten varsayılanlarla çalışıyor; bu test
+    varsayılanların **açıkça** F-001 davranışı olduğunu sabitliyor.
+    """
+    _, doc = generated
+    block = doc.blocks.get(BLOCK)
+
+    assert doc.header["$INSUNITS"] == 0
+    assert {layer.dxf.name for layer in doc.layers} >= {
+        "ONCU_TBL_GRID",
+        "ONCU_TBL_TEXT",
+        "ONCU_TBL_FILL",
+        "ONCU_TBL_OVERFLOW",
+    }
+    assert len([e for e in doc.modelspace() if e.dxftype() == "INSERT"]) == 1
+    assert any(
+        e.dxftype() == "HATCH" and tuple(e.rgb) == (255, 255, 255) for e in block
+    )
+
+
+def test_background_can_be_switched_off(reference_ods: Path, tmp_path: Path) -> None:
+    out = tmp_path / "zeminsiz.dxf"
+    assert run_cli(reference_ods, out, "--set", "background.enabled=false") == EXIT_OK
+
+    doc = ezdxf.readfile(str(out))
+    hatches = [e for e in doc.blocks.get(BLOCK) if e.dxftype() == "HATCH"]
+    assert hatches  # başlık dolguları duruyor
+    assert not any(tuple(e.rgb) == (255, 255, 255) for e in hatches)
+
+
+def test_block_reference_can_be_suppressed(reference_ods: Path, tmp_path: Path) -> None:
+    out = tmp_path / "insertsiz.dxf"
+    assert (
+        run_cli(reference_ods, out, "--set", "output.insert_block_reference=false")
+        == EXIT_OK
+    )
+
+    doc = ezdxf.readfile(str(out))
+    assert not [e for e in doc.modelspace() if e.dxftype() == "INSERT"]
+    assert doc.blocks.get(BLOCK) is not None  # tanım yine de var
+
+
+def test_layer_names_follow_the_config(reference_ods: Path, tmp_path: Path) -> None:
+    out = tmp_path / "katman.dxf"
+    assert (
+        run_cli(
+            reference_ods,
+            out,
+            "--set",
+            "layers.prefix=PROJE",
+            "--set",
+            "layers.grid_suffix=_CIZGI",
+        )
+        == EXIT_OK
+    )
+
+    doc = ezdxf.readfile(str(out))
+    names = {layer.dxf.name for layer in doc.layers}
+    assert "PROJE_CIZGI" in names
+    assert "PROJE_TEXT" in names
+    assert not any(name.startswith("ONCU_TBL") for name in names)
+
+
+def test_report_can_be_switched_off(reference_ods: Path, tmp_path: Path) -> None:
+    out = tmp_path / "raporsuz.dxf"
+    assert run_cli(reference_ods, out, "--set", "output.write_report=false") == EXIT_OK
+
+    assert out.is_file()
+    assert not out.with_suffix(".report.txt").exists()
+
+
+def test_marker_char_is_configurable(reference_ods: Path, tmp_path: Path) -> None:
+    out = tmp_path / "isaret.dxf"
+    assert (
+        run_cli(
+            reference_ods,
+            out,
+            "--overflow",
+            "marker",
+            "--set",
+            "overflow.marker_char=*",
+        )
+        == EXIT_OK
+    )
+
+    doc = ezdxf.readfile(str(out))
+    markers = [
+        e for e in doc.blocks.get(BLOCK) if e.dxf.layer == "ONCU_TBL_OVERFLOW"
+    ]
+    assert markers
+    assert set(markers[0].dxf.text) == {"*"}
+
+
+def test_invalid_setting_leaves_no_files(reference_ods: Path, tmp_path: Path) -> None:
+    out = tmp_path / "olmamali.dxf"
+    assert run_cli(reference_ods, out, "--set", "layout.scale_cm_to_units=0") != EXIT_OK
+    assert not out.exists()
+    assert not out.with_suffix(".report.txt").exists()
+
+
 def test_text_style_is_ttf_backed(generated) -> None:  # noqa: ANN001
     """AC-9: Kiril/CJK SHX ile çizilemez; stil bir TTF'e bağlı olmalı."""
     _, doc = generated

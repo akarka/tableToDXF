@@ -54,11 +54,74 @@ PYTHONPATH=src python -m tabletodxf mahal.ods --sheet Mahal --range B2:E7 \
 | `--report` | `<out>.report.txt` | rapor dosyası yolu |
 | `--verbose` | kapalı | `[TBL DEBUG]` satırlarını da bas |
 
-Öncelik: **CLI bayrağı > config dosyası > yerleşik varsayılan.**
-
 Çıkış kodları: `0` başarılı (uyarılar olabilir), `1` doğrulama/veri hatası, `2` kullanım hatası.
 
-Örnek config için [`tabletodxf.example.toml`](tabletodxf.example.toml).
+---
+
+## Ayarlar
+
+Yukarıdaki bayraklar sık kullanılanların kısayolu. **Her ayara** `--set` ile erişilebilir:
+
+```bash
+tabletodxf mahal.ods --sheet Mahal --range B2:F40 --out t.dxf --block T \
+    --set layers.prefix=PROJE_TBL \
+    --set background.color=#f5f5f5 \
+    --set overflow.min_width_factor=0.4
+```
+
+Kalıcı ayarlar için çalışma dizinine bir `tabletodxf.toml` koyun; araç kendiliğinden bulur
+(`--config` ile başka bir yol verilebilir):
+
+```toml
+[layout]
+scale_cm_to_units = 10.0
+frame_mm          = 0.35
+
+[layers]
+prefix = "PROJE_TBL"
+
+[overflow]
+mode = "condense"
+```
+
+**Öncelik:** `--set` > adanmış bayrak > config dosyası > yerleşik varsayılan.
+
+Yedi bölüm var — `source`, `layout`, `text`, `overflow`, `background`, `layers`, `output`.
+Tam liste, tipler ve varsayılanlar: [`tabletodxf.example.toml`](tabletodxf.example.toml)
+(her satırı varsayılan değeriyle listeler; olduğu gibi kullanmak hiçbir şeyi değiştirmez) ve
+gerekçeleriyle birlikte [`DOCS/Features/F-002.md`](DOCS/Features/F-002.md).
+
+Tanınmayan bir bölüm ya da anahtar **hatadır** ve çıktı üretilmeden durur — bir yazım hatası,
+ayarın uygulanmadığını fark ettirmeden geçmesin diye.
+
+---
+
+## Kütüphane olarak kullanım
+
+CLI, `convert()` üzerine ince bir sarmalayıcıdır; aynı yol koddan da çağrılabilir
+(`argparse`/`tkinter` yüklenmez):
+
+```python
+from pathlib import Path
+from tabletodxf import Config, Job, convert, load_config
+
+config = load_config("tabletodxf.toml")          # ya da Config()
+result = convert(
+    Job(
+        source=Path("mahal.ods"),
+        sheet="Mahal",
+        range_text="B2:F40",
+        out=Path("mahal.dxf"),
+        block="MAHAL_TABLOSU",
+    ),
+    config,
+)
+print(result.out_path, result.warnings, result.entities)
+```
+
+`Config` kalıcı ayarları, `Job` çalıştırmaya özgü girdileri taşır — ikisinin ömrü farklı
+(ADR-003). Kendi `Report`'unuzu enjekte ederek `[TBL …]` satırlarını kendi arayüzünüzde
+gösterebilirsiniz.
 
 ---
 
@@ -142,7 +205,7 @@ düzeltirsiniz; araç sessizce kaymış bir tablo üretmez.
 ## Geliştirme
 
 ```bash
-.venv/Scripts/python.exe -m pytest          # 191 test
+.venv/Scripts/python.exe -m pytest          # 252 test
 .venv/Scripts/python.exe -m pytest tests/unit -q
 ```
 
@@ -152,7 +215,9 @@ Referans `.ods` depoya ikili dosya olarak girmez; `tests/fixtures/ods_builder.py
 ### Katmanlar
 
 ```
-cli.py          → argüman ayrıştırma, config birleştirme, çıkış kodu
+cli.py          → argüman ayrıştırma, çıkış kodu (ince sarmalayıcı)
+api.py          → Job / Result / convert()  — tek giriş noktası
+config.py       → tipli ayar katmanı (saf veri)
 ods_reader.py   → .ods → SheetModel        (odfpy yalnızca burada)
 model.py        → SheetModel ve yardımcı tipler (saf veri)
 metrics.py      → TTF ile metin genişliği ölçümü, sığdı/sığmadı
@@ -162,7 +227,7 @@ report.py       → [TBL …] satırları, konsol + .report.txt
 errors.py       → hata kataloğu
 ```
 
-`geometry.py` `odfpy`'yi görmez, `ods_reader.py` `ezdxf`'i görmez.
+`geometry.py` `odfpy`'yi görmez, `ods_reader.py` `ezdxf`'i görmez, `config.py` hiçbirini görmez.
 
 ---
 

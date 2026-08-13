@@ -19,6 +19,7 @@ import ezdxf
 from ezdxf.enums import TextEntityAlignment
 from ezdxf.lldxf import const
 
+from .config import LayerConfig, OutputConfig, TextConfig
 from .geometry import BorderLine, Drawing, FillShape, TextBox, TextItem
 from .model import HAlign, Rgb, VAlign
 from .report import Report
@@ -63,12 +64,12 @@ def escape_mtext(text: str) -> str:
 
 
 def layer_names(prefix: str) -> dict[str, str]:
-    return {
-        "grid": f"{prefix}_GRID",
-        "text": f"{prefix}_TEXT",
-        "fill": f"{prefix}_FILL",
-        "overflow": f"{prefix}_OVERFLOW",
-    }
+    """Yalnızca önek verildiğinde varsayılan soneklerle katman adları.
+
+    Tam denetim `LayerConfig.names()` üzerinden; bu yardımcı kısa yol olarak
+    duruyor.
+    """
+    return LayerConfig(prefix=prefix).names()
 
 
 def snap_lineweight(width_mm: float) -> int:
@@ -88,30 +89,36 @@ def write(
     report: Report,
     *,
     block_name: str,
-    layer_prefix: str,
-    text_style: str,
     font_file: str,
-    dxf_version: str = "R2013",
+    layers_config: LayerConfig | None = None,
+    text_config: TextConfig | None = None,
+    output_config: OutputConfig | None = None,
 ) -> None:
-    doc = ezdxf.new(dxfversion=dxf_version, setup=False)
+    layers_config = layers_config or LayerConfig()
+    text_config = text_config or TextConfig()
+    output_config = output_config or OutputConfig()
+
+    doc = ezdxf.new(dxfversion=output_config.dxf_version, setup=False)
 
     # AC-8: birimsiz çıktı. Hedef çizime INSERT edildiğinde otomatik ölçekleme
-    # devreye girmez; ölçek yalnızca `--scale` ile, üretim anında belirlenir.
+    # devreye girmez; ölçek yalnızca üretim anında belirlenir.
     doc.header["$INSUNITS"] = 0
 
     # Stil tekil bir adla tanımlanır ki hedef çizimdeki aynı adlı bir stil onu
     # sessizce ezmesin (ADR-002). Kiril/CJK için TTF şart, SHX yetmez (AC-9).
+    text_style = text_config.style_name
     if text_style not in doc.styles:
         doc.styles.add(text_style, font=font_file)
 
-    layers = layer_names(layer_prefix)
+    layers = layers_config.names()
+    colors = layers_config.colors()
     for key, name in layers.items():
         if name not in doc.layers:
             # Katmanlar işlev taşır, stil değil. Renk yalnızca `_OVERFLOW` için
             # anlamlı: `###` içerik değil, teşhis çıktısıdır — kırmızı durur.
-            doc.layers.add(name, color=1 if key == "overflow" else 7)
+            doc.layers.add(name, color=colors[key])
 
-    block = doc.blocks.new(name=block_name, base_point=(0, 0))
+    block = doc.blocks.new(name=block_name, base_point=output_config.block_base_point)
 
     # Zemin ilk yazılır — blok içinde çizim sırası varlık sırasıdır, yani ilk
     # yazılan en arkada kalır.
@@ -133,7 +140,8 @@ def write(
         # katman seçimiyle görülebilsin.
         _add_text(block, item, layers["overflow"], text_style, use_true_color=True)
 
-    doc.modelspace().add_blockref(block_name, (0, 0))
+    if output_config.insert_block_reference:
+        doc.modelspace().add_blockref(block_name, output_config.block_base_point)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     doc.saveas(str(out_path))

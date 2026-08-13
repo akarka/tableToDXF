@@ -1,4 +1,9 @@
-"""Argüman/config birleştirme ve çıkış kodları."""
+"""CLI — argüman/config birleştirme, öncelik sırası, çıkış kodları.
+
+CLI artık `api.convert()` üzerine ince bir sarmalayıcı (ADR-003); buradaki
+testler o ince katmanı sınar: bayraklar doğru ayara mı gidiyor, öncelik sırası
+doğru mu, çıkış kodları doğru mu.
+"""
 
 from __future__ import annotations
 
@@ -6,16 +11,18 @@ from pathlib import Path
 
 import pytest
 
+from tabletodxf.api import Job, resolve_font
 from tabletodxf.cli import (
-    DEFAULTS,
     EXIT_DATA_ERROR,
     EXIT_USAGE_ERROR,
+    FLAG_TO_SETTING,
+    build_config,
+    build_job,
     build_parser,
-    load_config,
     main,
-    merge,
-    resolve_font,
+    validate_dxf_version,
 )
+from tabletodxf.config import Config, SourceConfig
 from tabletodxf.errors import CONFIG_INVALID, FONT_NOT_FOUND, TableToDxfError, UsageError
 
 BASE_ARGS = [
@@ -31,9 +38,12 @@ BASE_ARGS = [
 ]
 
 CONFIG_BODY = """
+[layout]
 scale_cm_to_units = 25.0
-dxf_version       = "R2018"
-overflow          = "full"
+frame_mm = 1.5
+
+[overflow]
+mode = "full"
 
 [text]
 style_name = "CONFIG_STYLE"
@@ -41,6 +51,9 @@ font_file  = "ConfigFont.ttf"
 
 [layers]
 prefix = "CONFIG_PREFIX"
+
+[output]
+dxf_version = "R2018"
 """
 
 
@@ -48,133 +61,188 @@ def parse(extra: list[str] | None = None):  # noqa: ANN201
     return build_parser().parse_args(BASE_ARGS + (extra or []))
 
 
-# ── Öncelik: bayrak > config > varsayılan ───────────────────────────────────
+def write_config(tmp_path: Path, body: str = CONFIG_BODY) -> Path:
+    path = tmp_path / "tabletodxf.toml"
+    path.write_text(body, encoding="utf-8")
+    return path
 
 
-def test_builtin_defaults_apply_when_nothing_is_given() -> None:
-    settings = merge(parse(), {})
-    assert settings.scale == DEFAULTS["scale"]
-    assert settings.overflow == DEFAULTS["overflow"]
-    assert settings.text_style == DEFAULTS["text_style"]
-    assert settings.layer_prefix == DEFAULTS["layer_prefix"]
-    assert settings.dxf_version == DEFAULTS["dxf_version"]
+# ── Öncelik: --set > bayrak > dosya > varsayılan ────────────────────────────
 
 
-def test_config_overrides_builtin_defaults(tmp_path: Path) -> None:
-    config_path = tmp_path / "tabletodxf.toml"
-    config_path.write_text(CONFIG_BODY, encoding="utf-8")
-    settings = merge(parse(), load_config(str(config_path), tmp_path))
-
-    assert settings.scale == 25.0
-    assert settings.overflow == "full"
-    assert settings.text_style == "CONFIG_STYLE"
-    assert settings.font == "ConfigFont.ttf"
-    assert settings.layer_prefix == "CONFIG_PREFIX"
-    assert settings.dxf_version == "R2018"
+def test_builtin_defaults_apply_when_nothing_is_given(tmp_path: Path) -> None:
+    config = build_config(parse(), cwd=tmp_path)
+    assert config == Config()
 
 
-def test_flag_overrides_config(tmp_path: Path) -> None:
-    config_path = tmp_path / "tabletodxf.toml"
-    config_path.write_text(CONFIG_BODY, encoding="utf-8")
-    config = load_config(str(config_path), tmp_path)
+def test_config_file_overrides_builtin_defaults(tmp_path: Path) -> None:
+    config = build_config(parse(["--config", str(write_config(tmp_path))]), cwd=tmp_path)
 
-    settings = merge(
-        parse(["--scale", "5", "--overflow", "marker", "--layer-prefix", "FLAG"]), config
+    assert config.layout.scale_cm_to_units == 25.0
+    assert config.layout.frame_mm == 1.5
+    assert config.overflow.mode == "full"
+    assert config.text.style_name == "CONFIG_STYLE"
+    assert config.layers.prefix == "CONFIG_PREFIX"
+    assert config.output.dxf_version == "R2018"
+
+
+def test_flag_overrides_config_file(tmp_path: Path) -> None:
+    args = parse(
+        ["--config", str(write_config(tmp_path)), "--scale", "5", "--overflow", "marker"]
     )
-    assert settings.scale == 5.0
-    assert settings.overflow == "marker"
-    assert settings.layer_prefix == "FLAG"
-    # Bayrakla ezilmeyen anahtarlar config'ten gelmeye devam eder.
-    assert settings.text_style == "CONFIG_STYLE"
+    config = build_config(args, cwd=tmp_path)
+
+    assert config.layout.scale_cm_to_units == 5.0
+    assert config.overflow.mode == "marker"
+    # Bayrakla ezilmeyen anahtarlar dosyadan gelmeye devam eder.
+    assert config.text.style_name == "CONFIG_STYLE"
+
+
+def test_set_overrides_dedicated_flag(tmp_path: Path) -> None:
+    """`--set` en açık niyet; bayrağı da ezmeli (F-002 AC-7)."""
+    args = parse(["--scale", "5", "--set", "layout.scale_cm_to_units=99"])
+    assert build_config(args, cwd=tmp_path).layout.scale_cm_to_units == 99.0
+
+
+def test_set_reaches_settings_without_a_dedicated_flag(tmp_path: Path) -> None:
+    args = parse(
+        [
+            "--set",
+            "background.enabled=false",
+            "--set",
+            "background.color=#f5f5f5",
+            "--set",
+            "source.default_padding_mm=2.5",
+            "--set",
+            "layers.overflow_color=3",
+        ]
+    )
+    config = build_config(args, cwd=tmp_path)
+
+    assert config.background.enabled is False
+    assert config.background.color == (245, 245, 245)
+    assert config.source.default_padding_mm == 2.5
+    assert config.layers.overflow_color == 3
 
 
 def test_default_config_is_picked_up_from_cwd(tmp_path: Path) -> None:
-    (tmp_path / "tabletodxf.toml").write_text(CONFIG_BODY, encoding="utf-8")
-    assert load_config(None, tmp_path)["scale_cm_to_units"] == 25.0
+    write_config(tmp_path)
+    assert build_config(parse(), cwd=tmp_path).layout.scale_cm_to_units == 25.0
 
 
 def test_absent_default_config_is_not_an_error(tmp_path: Path) -> None:
-    assert load_config(None, tmp_path) == {}
+    assert build_config(parse(), cwd=tmp_path) == Config()
 
 
 def test_explicitly_named_missing_config_is_a_usage_error(tmp_path: Path) -> None:
     """Kullanıcı bir yol verdiyse sessizce yok saymak yanlış ayarla üretim demek."""
     with pytest.raises(UsageError) as excinfo:
-        load_config(str(tmp_path / "yok.toml"), tmp_path)
+        build_config(parse(["--config", str(tmp_path / "yok.toml")]), cwd=tmp_path)
     assert excinfo.value.code == CONFIG_INVALID
 
 
 def test_broken_toml_is_a_usage_error(tmp_path: Path) -> None:
     path = tmp_path / "bozuk.toml"
-    path.write_text("scale_cm_to_units = = 3", encoding="utf-8")
+    path.write_text("[layout]\nscale_cm_to_units = = 3", encoding="utf-8")
     with pytest.raises(UsageError):
-        load_config(str(path), tmp_path)
+        build_config(parse(["--config", str(path)]), cwd=tmp_path)
 
 
-def test_invalid_overflow_in_config_is_rejected() -> None:
-    with pytest.raises(UsageError):
-        merge(parse(), {"overflow": "kırp"})
+# ── Bayrak eşlemesi ─────────────────────────────────────────────────────────
 
 
-def test_frame_defaults_to_the_builtin_width() -> None:
-    from tabletodxf.geometry import DEFAULT_FRAME_MM
-
-    assert merge(parse(), {}).frame_mm == DEFAULT_FRAME_MM
-
-
-def test_frame_can_be_set_from_flag_and_config() -> None:
-    assert merge(parse(["--frame", "1.2"]), {}).frame_mm == 1.2
-    assert merge(parse(), {"frame_mm": 0.8}).frame_mm == 0.8
-    assert merge(parse(["--frame", "0"]), {"frame_mm": 0.8}).frame_mm == 0.0
+def test_every_mapped_flag_exists_on_the_parser() -> None:
+    """Eşleme tablosu ile parser'ın ayrışmasını engeller."""
+    known = {action.dest for action in build_parser()._actions}  # noqa: SLF001
+    assert set(FLAG_TO_SETTING) <= known
 
 
-def test_negative_frame_is_rejected() -> None:
+def test_every_mapped_setting_exists_on_config() -> None:
+    config = Config()
+    for setting in FLAG_TO_SETTING.values():
+        section, _, key = setting.partition(".")
+        assert hasattr(getattr(config, section), key), setting
+
+
+@pytest.mark.parametrize("mode", ["condense", "mtext", "marker", "full"])
+def test_every_overflow_mode_is_accepted(mode: str, tmp_path: Path) -> None:
+    assert build_config(parse(["--overflow", mode]), cwd=tmp_path).overflow.mode == mode
+
+
+def test_overflow_defaults_to_condense(tmp_path: Path) -> None:
+    """Taşan hücre kendiliğinden sığar; elle düzeltme gerektirmemeli."""
+    assert build_config(parse(), cwd=tmp_path).overflow.mode == "condense"
+
+
+def test_negative_frame_is_rejected(tmp_path: Path) -> None:
     """`0` çerçeveyi kapatır; negatif değer bir yazım hatasıdır."""
     with pytest.raises(UsageError):
-        merge(parse(["--frame", "-1"]), {})
+        build_config(parse(["--frame", "-1"]), cwd=tmp_path)
 
 
-def test_overflow_defaults_to_condense() -> None:
-    """Taşan hücre kendiliğinden sığar; elle düzeltme gerektirmemeli."""
-    assert merge(parse(), {}).overflow == "condense"
+def test_unknown_setting_in_set_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(UsageError):
+        build_config(parse(["--set", "layout.olmayan=1"]), cwd=tmp_path)
 
 
-@pytest.mark.parametrize("mode", ["mtext", "condense", "marker", "full"])
-def test_every_overflow_mode_is_accepted(mode: str) -> None:
-    assert merge(parse(["--overflow", mode]), {}).overflow == mode
+def test_malformed_set_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(UsageError):
+        build_config(parse(["--set", "scale=10"]), cwd=tmp_path)
 
 
 # ── DXF sürümü ──────────────────────────────────────────────────────────────
 
 
 def test_r2018_is_accepted() -> None:
-    assert merge(parse(["--dxf-version", "R2018"]), {}).dxf_version == "R2018"
+    assert validate_dxf_version("R2018") == "R2018"
 
 
 @pytest.mark.parametrize("old", ["R12", "R2000", "R2010"])
 def test_versions_below_r2013_are_rejected(old: str) -> None:
     """AC-9 TTF metin stili gerektiriyor; eski sürümler bunu taşımaz."""
     with pytest.raises(UsageError) as excinfo:
-        merge(parse(["--dxf-version", old]), {})
+        validate_dxf_version(old)
     assert excinfo.value.code == CONFIG_INVALID
 
 
 def test_unknown_version_is_rejected() -> None:
     with pytest.raises(UsageError):
-        merge(parse(["--dxf-version", "R9999"]), {})
+        validate_dxf_version("R9999")
 
 
-# ── Türetilen yollar ────────────────────────────────────────────────────────
+# ── Job ─────────────────────────────────────────────────────────────────────
 
 
 def test_report_path_defaults_next_to_the_dxf() -> None:
-    settings = merge(parse(), {})
-    assert settings.report_path == Path("cikti.report.txt")
+    assert build_job(parse()).resolved_report_path() == Path("cikti.report.txt")
 
 
 def test_report_path_can_be_overridden() -> None:
-    settings = merge(parse(["--report", "başka.txt"]), {})
-    assert settings.report_path == Path("başka.txt")
+    job = build_job(parse(["--report", "başka.txt"]))
+    assert job.resolved_report_path() == Path("başka.txt")
+
+
+def test_job_carries_the_per_run_inputs() -> None:
+    job = build_job(parse())
+    assert (job.sheet, job.range_text, job.block) == ("Mahal", "B3:C500", "TBL")
+    assert job.source == Path("kaynak.ods")
+    assert job.out == Path("cikti.dxf")
+
+
+def test_config_carries_no_per_run_inputs() -> None:
+    """ADR-003'ün ayrımı: `Config` kalıcı tercihler, `Job` her çalıştırmanın girdisi.
+
+    Bir alan `Config`'e sızarsa UI'da yanlış yere düşer — kaydedilen tercihler
+    arasında dosya yolu ya da aralık görünür.
+    """
+    per_run = {"sheet", "range_text", "out", "block", "report_path"}
+    config_fields = set(vars(Config()))
+    assert not per_run & config_fields
+
+    # `Config.source` bir **bölümdür** (okuma varsayılanları), `Job.source` ise
+    # dosya yolu; ad benzerliği kasıtlı, tipleri ayrı.
+    assert isinstance(Config().source, SourceConfig)
+    assert isinstance(Job(Path("a.ods"), "S", "A1", Path("o.dxf"), "B").source, Path)
 
 
 # ── Font çözümü ─────────────────────────────────────────────────────────────
@@ -209,7 +277,7 @@ def test_non_ods_input_exits_with_data_error(tmp_path: Path, capsys) -> None:  #
     assert not out.exists()
 
 
-def test_bad_config_exits_with_usage_error(tmp_path: Path, capsys) -> None:  # noqa: ANN001
+def test_bad_config_exits_with_usage_error(tmp_path: Path) -> None:
     out = tmp_path / "cikti.dxf"
     code = main(
         [
@@ -224,6 +292,27 @@ def test_bad_config_exits_with_usage_error(tmp_path: Path, capsys) -> None:  # n
             "T",
             "--config",
             str(tmp_path / "yok.toml"),
+        ]
+    )
+    assert code == EXIT_USAGE_ERROR
+    assert not out.exists()
+
+
+def test_invalid_setting_exits_with_usage_error(tmp_path: Path) -> None:
+    out = tmp_path / "cikti.dxf"
+    code = main(
+        [
+            "kaynak.ods",
+            "--sheet",
+            "S",
+            "--range",
+            "A1:B2",
+            "--out",
+            str(out),
+            "--block",
+            "T",
+            "--set",
+            "overflow.min_width_factor=-5",
         ]
     )
     assert code == EXIT_USAGE_ERROR

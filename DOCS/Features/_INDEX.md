@@ -23,9 +23,19 @@ This is the single source of truth for all feature work. Agents must check this 
 | ID | Feature | Status | Agent | Feature Doc |
 |----|---------|--------|-------|-------------|
 | F-001 | `.ods` seçiminden DXF tablo bloğu üretimi | `REVIEW` | Claude Code | [F-001.md](F-001.md) |
+| F-002 | Ayar yüzeyi — tipli konfigürasyon katmanı | `REVIEW` | Claude Code | [F-002.md](F-002.md) |
 
-`REVIEW` gerekçesi: kod ve 191 otomatik test tamam; F-001'deki **Manual Verification** adımları
-(AutoCAD'de görsel karşılaştırma, blok yeniden tanımlama, `ETRANSMIT`) insana bağlı ve bekliyor.
+`REVIEW` gerekçesi (F-001): kod tamam; **Manual Verification** adımları (AutoCAD'de görsel
+karşılaştırma, blok yeniden tanımlama, `ETRANSMIT`) insana bağlı ve bekliyor.
+
+`REVIEW` gerekçesi (F-002): kod ve testler tamam, 252 test geçiyor. Aracı bir masaüstü
+uygulamasına dönüştürme yolunun ilk adımıydı: kodun içine gömülü her davranış değeri tipli bir
+ayara çıktı, CLI korundu, UI ve suite'in bağlanacağı şema doğdu (`Config` / `Job` / `convert()`).
+Mimari gerekçeler ADR-003 ve ADR-004'te.
+
+Sıradaki: **F-003 — masaüstü UI.** F-002'nin açık bıraktığı iki soru UI'a başlamadan
+netleşmeli (bkz. F-002 → Open Questions): ayar profilleri gerekecek mi, ve ayar dosyası
+kullanıcı başına (`%APPDATA%`) da aranacak mı.
 
 ---
 

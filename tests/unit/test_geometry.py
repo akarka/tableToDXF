@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from tabletodxf import geometry
+from tabletodxf.config import BackgroundConfig, LayoutConfig, OverflowConfig
 from tabletodxf.metrics import FontMetrics
 from tabletodxf.model import Border, Borders, Cell, FontSpec, SheetModel
 from tabletodxf.report import Report
@@ -32,16 +33,42 @@ def make_model(rows: int, cols: int, cells: list[Cell]) -> SheetModel:
     return model
 
 
-def build(model: SheetModel, metrics: FontMetrics, report: Report, **kwargs):  # noqa: ANN201
-    """Testlerde dış çerçeve varsayılan olarak **kapalı**.
+def build(  # noqa: ANN201
+    model: SheetModel,
+    metrics: FontMetrics,
+    report: Report,
+    *,
+    scale_cm_to_units: float = 10.0,
+    frame_mm: float = 0.0,
+    line_spacing: float = 1.0,
+    overflow: str = "condense",
+    min_width_factor: float = OverflowConfig().min_width_factor,
+    marker_char: str = OverflowConfig().marker_char,
+    background: bool = True,
+    background_color: tuple[int, int, int] = BackgroundConfig().color,
+):
+    """Config nesnelerini testler adına kuran yardımcı.
 
-    Kenarlık kuralları (paylaşılan kenar tekilleştirmesi, eş doğrultulu
-    birleştirme, birleşik alanın bastırılması) tek başına sınanabilsin diye:
-    çerçeve her çizime dört çizgi ekleyip bu testlerdeki her sayımı bozardı.
-    Çerçeveyi sınayan testler `frame_mm`'i açıkça geçiyor.
+    Dış çerçeve burada varsayılan olarak **kapalı**: kenarlık kuralları
+    (tekilleştirme, eş doğrultulu birleştirme, birleşik alanın bastırılması)
+    tek başına sınanabilsin diye. Çerçeve her çizime dört çizgi ekleyip bu
+    testlerdeki sayımları bozardı; çerçeveyi sınayan testler `frame_mm`'i
+    açıkça geçiyor.
     """
-    kwargs.setdefault("frame_mm", 0.0)
-    return geometry.build(model, metrics, report, **kwargs)
+    return geometry.build(
+        model,
+        metrics,
+        report,
+        layout=LayoutConfig(
+            scale_cm_to_units=scale_cm_to_units,
+            frame_mm=frame_mm,
+            line_spacing=line_spacing,
+        ),
+        overflow=OverflowConfig(
+            mode=overflow, min_width_factor=min_width_factor, marker_char=marker_char
+        ),
+        background=BackgroundConfig(enabled=background, color=background_color),
+    )
 
 
 # ── Izgara koordinatları ────────────────────────────────────────────────────
@@ -201,7 +228,7 @@ def test_background_covers_the_whole_selection(metrics, report) -> None:  # noqa
     assert drawing.fills == []  # hücre dolgusu üretilmedi
     background = drawing.background
     assert background is not None
-    assert background.color == geometry.BACKGROUND_COLOR
+    assert background.color == BackgroundConfig().color
     # 3 sütun × 10 mm, 2 satır × 5 mm, 1 cm = 10 birim.
     assert background.corners == (
         (0.0, 0.0),
@@ -291,7 +318,7 @@ def test_frame_is_on_by_default(metrics, report) -> None:  # noqa: ANN001
     drawing = geometry.build(make_model(2, 2, []), metrics, report)
     assert len(drawing.lines) == 4
     assert all(
-        line.width_mm == pytest.approx(geometry.DEFAULT_FRAME_MM)
+        line.width_mm == pytest.approx(LayoutConfig().frame_mm)
         for line in drawing.lines
     )
 
@@ -563,7 +590,7 @@ def test_condense_shrinks_the_text_to_fit(metrics, report) -> None:  # noqa: ANN
 
     item = drawing.condensed[0]
     assert item.text == LONG  # kırpma yok
-    assert geometry.MIN_WIDTH_FACTOR < item.width_factor < 1.0
+    assert OverflowConfig().min_width_factor < item.width_factor < 1.0
 
 
 def test_condensed_text_actually_fits_the_cell(metrics, report) -> None:  # noqa: ANN001
@@ -578,7 +605,7 @@ def test_condense_factor_is_clamped_at_the_readable_floor(metrics, report) -> No
     absurd = make_model(1, 1, [_text_cell("x" * 400)])
     item = build(absurd, metrics, report, overflow="condense").condensed[0]
 
-    assert item.width_factor == geometry.MIN_WIDTH_FACTOR
+    assert item.width_factor == OverflowConfig().min_width_factor
     assert any("clamped=yes" in line for line in report.lines)
 
 

@@ -9,6 +9,7 @@ import pytest
 
 from fixtures.ods_builder import CellSpec, RowSpec, SheetSpec, build_ods
 from tabletodxf import ods_reader
+from tabletodxf.config import SourceConfig
 from tabletodxf.errors import (
     FORMULA_NO_CACHE,
     MERGE_CROSSES_SELECTION,
@@ -90,7 +91,7 @@ def test_per_edge_border_widths_are_read(model) -> None:  # noqa: ANN001
 
 
 def test_padding_has_a_default_when_absent(model) -> None:  # noqa: ANN001
-    assert model.cell(1, 1).padding_mm == pytest.approx(ods_reader.DEFAULT_PADDING_MM)
+    assert model.cell(1, 1).padding_mm == pytest.approx(SourceConfig().default_padding_mm)
 
 
 # ── Birleştirmeler ──────────────────────────────────────────────────────────

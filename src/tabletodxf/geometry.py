@@ -14,30 +14,14 @@ import math
 from dataclasses import dataclass, field
 from typing import Literal
 
+from .config import BackgroundConfig, LayoutConfig, OverflowConfig
 from .metrics import FontMetrics, fits
 from .model import BLACK, Border, Cell, HAlign, Rgb, SheetModel, VAlign
 from .report import Report
 
 Point = tuple[float, float]
 
-OverflowMode = Literal["mtext", "condense", "marker", "full"]
-MARKER_CHAR = "#"
-
-# `condense` modunda genişlik çarpanının inebileceği taban. Altına inmek metni
-# okunmaz hâle getiriyor; taşmayı kabul edip uyarmak, okunamayan bir tablo
-# üretmekten iyidir.
-MIN_WIDTH_FACTOR = 0.25
-
-# Tablonun dış sınırına çekilen çerçevenin kalınlığı (mm). `0.0` = çerçeve yok.
-# Sayfadan gelmeyen tek çizgi budur; ADR-002'ye bilinçli bir istisnadır çünkü
-# tablonun nerede bittiği çizimin kendi bilgisi, sayfanın değil.
-DEFAULT_FRAME_MM = 0.35
-
-# Calc'ta "dolgu yok" olan hücre ekranda **beyaz** görünür, saydam değil.
-# Dolgusuz hücre için hiç varlık üretmezsek çizimde altındaki geometri görünür
-# ve tablo sayfadakine benzemez (ADR-002). Bu yüzden seçimin tamamına, her
-# şeyin arkasına opak beyaz bir zemin serilir.
-BACKGROUND_COLOR: Rgb = (255, 255, 255)
+OverflowMode = Literal["condense", "mtext", "marker", "full"]
 
 
 @dataclass(frozen=True)
@@ -127,20 +111,25 @@ def build(
     metrics: FontMetrics,
     report: Report,
     *,
-    scale_cm_to_units: float = 10.0,
-    overflow: OverflowMode = "condense",
-    frame_mm: float = DEFAULT_FRAME_MM,
+    layout: LayoutConfig | None = None,
+    overflow: OverflowConfig | None = None,
+    background: BackgroundConfig | None = None,
 ) -> Drawing:
     """Modeli çizilecek varlıklara çevirir. Üretim sırası F-001'deki sıradır."""
-    units_per_mm = scale_cm_to_units / 10.0
+    layout = layout or LayoutConfig()
+    overflow = overflow or OverflowConfig()
+    background = background or BackgroundConfig()
+
+    units_per_mm = layout.scale_cm_to_units / 10.0
 
     xs = _cumulative(model.col_widths_mm, units_per_mm, sign=1.0)
     ys = _cumulative(model.row_heights_mm, units_per_mm, sign=-1.0)
 
     drawing = Drawing()
-    drawing.background = _background(model, xs, ys)
+    if background.enabled:
+        drawing.background = _background(model, xs, ys, background.color)
     _emit_fills(model, xs, ys, drawing)
-    _emit_borders(model, xs, ys, drawing, frame_mm=frame_mm)
+    _emit_borders(model, xs, ys, drawing, frame_mm=layout.frame_mm)
     _emit_texts(
         model,
         xs,
@@ -150,6 +139,7 @@ def build(
         drawing,
         units_per_mm=units_per_mm,
         overflow=overflow,
+        line_spacing=layout.line_spacing,
     )
     return drawing
 
@@ -186,7 +176,9 @@ def _cell_box(
 # ── 4. Zemin ve dolgular ────────────────────────────────────────────────────
 
 
-def _background(model: SheetModel, xs: list[float], ys: list[float]) -> FillShape | None:
+def _background(
+    model: SheetModel, xs: list[float], ys: list[float], color: Rgb
+) -> FillShape | None:
     """Seçimin tamamını kaplayan tek bir opak beyaz dörtgen.
 
     Hücre başına beyaz dolgu üretmek yerine tek dörtgen: N yerine 1 varlık,
@@ -203,7 +195,7 @@ def _background(model: SheetModel, xs: list[float], ys: list[float]) -> FillShap
     right, bottom = xs[-1], ys[-1]
     return FillShape(
         corners=((0.0, 0.0), (right, 0.0), (right, bottom), (0.0, bottom)),
-        color=BACKGROUND_COLOR,
+        color=color,
     )
 
 
@@ -322,7 +314,7 @@ def _emit_borders(
     ys: list[float],
     drawing: Drawing,
     *,
-    frame_mm: float = DEFAULT_FRAME_MM,
+    frame_mm: float,
 ) -> None:
     horizontal, vertical = _collect_edges(model)
     _apply_frame(horizontal, vertical, model, frame_mm)
@@ -392,7 +384,8 @@ def _emit_texts(
     drawing: Drawing,
     *,
     units_per_mm: float,
-    overflow: OverflowMode,
+    overflow: OverflowConfig,
+    line_spacing: float = 1.0,
 ) -> None:
     for cell in _visible_cells(model):
         if not cell.text:
@@ -418,21 +411,21 @@ def _emit_texts(
         overflowed = not fits(widest_mm, available_mm)
 
         cap_units = metrics.cap_height_mm(size_pt) * units_per_mm
-        step_units = metrics.line_height_mm(size_pt) * units_per_mm
+        step_units = metrics.line_height_mm(size_pt) * line_spacing * units_per_mm
 
-        use_box = overflowed and overflow == "mtext"
-        use_condense = overflowed and overflow == "condense"
+        use_box = overflowed and overflow.mode == "mtext"
+        use_condense = overflowed and overflow.mode == "condense"
         # Kaydırma açıkken işaret basılmaz: kaydırma zaten sığdırma yöntemidir,
         # `###` onu görünmez kılardı. Geriye tek bir kelimenin satıra sığmadığı
         # durum kalır; orada da metni yazmak `###`ten bilgilendiricidir.
-        use_marker = overflowed and overflow == "marker" and not cell.wrap
+        use_marker = overflowed and overflow.mode == "marker" and not cell.wrap
 
         # Tüm satırlara aynı çarpan uygulanır — en geniş satırdan türetilir.
         # Satır başına ayrı çarpan her satırı hücreyi doldurmaya zorlar ve
         # harf genişlikleri satırdan satıra zıplar.
         width_factor = 1.0
         if use_condense and widest_mm > 0:
-            width_factor = max(MIN_WIDTH_FACTOR, available_mm / widest_mm)
+            width_factor = max(overflow.min_width_factor, available_mm / widest_mm)
 
         if overflowed:
             if use_box:
@@ -447,7 +440,7 @@ def _emit_texts(
             if use_condense:
                 extra["width_factor"] = round(width_factor, 3)
                 # Tabana dayandıysak metin hâlâ taşıyor; sessizce geçilmemeli.
-                if width_factor <= MIN_WIDTH_FACTOR:
+                if width_factor <= overflow.min_width_factor:
                     extra["clamped"] = "yes"
             report.warn(
                 "render_cell",
@@ -484,7 +477,9 @@ def _emit_texts(
             continue
 
         if use_marker:
-            lines = [_marker_run(metrics, size_pt, available_mm)]
+            lines = [
+                _marker_run(metrics, size_pt, available_mm, overflow.marker_char)
+            ]
 
         block_units = (len(lines) - 1) * step_units + cap_units
         across_units = (across_max - across_min) - 2 * padding_units
@@ -591,15 +586,17 @@ def _wrap(
     return wrapped
 
 
-def _marker_run(metrics: FontMetrics, size_pt: float, available_mm: float) -> str:
+def _marker_run(
+    metrics: FontMetrics, size_pt: float, available_mm: float, marker_char: str
+) -> str:
     """Kullanılabilir genişliği dolduracak kadar `#`.
 
     Kırpma yok: `###` verinin gizlendiğini söyler, kırpılmış metin söylemez.
     """
-    char_mm = metrics.char_width_mm(MARKER_CHAR, size_pt)
+    char_mm = metrics.char_width_mm(marker_char, size_pt)
     if char_mm <= 0 or available_mm <= 0:
-        return MARKER_CHAR * 3
-    return MARKER_CHAR * max(1, int(available_mm // char_mm))
+        return marker_char * 3
+    return marker_char * max(1, int(available_mm // char_mm))
 
 
 def _frame_point(along: float, across: float, direction: Point, up: Point) -> Point:

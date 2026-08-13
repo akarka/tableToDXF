@@ -2,7 +2,7 @@
 
 Registry of all test suites. Update this when adding or removing test files.
 
-Toplam: **191 test**, tamamı geçiyor (2026-08-13).
+Toplam: **252 test**, tamamı geçiyor (2026-08-13).
 
 ---
 
@@ -14,7 +14,8 @@ Toplam: **191 test**, tamamı geçiyor (2026-08-13).
 | Ölçüm | `tests/unit/test_metrics.py` | TTF genişlik ölçümü, cap height, sığdı/sığmadı sınırları, eksik font/glif | ✅ |
 | Okuyucu | `tests/unit/test_ods_reader.py` | gizli satır/sütun, birleştirme + `covered`, görünen metin, hata kataloğu, `SRC_STALE` | ✅ |
 | Geometri | `tests/unit/test_geometry.py` | kenar tekilleştirme, eş doğrultulu birleştirme, birleşik alan iç ızgarası, hizalama, taşma modları, determinizm | ✅ |
-| CLI | `tests/unit/test_cli.py` | bayrak > config > varsayılan önceliği, DXF sürüm doğrulaması, font çözümü, çıkış kodları | ✅ |
+| Ayarlar | `tests/unit/test_config.py` | varsayılanların bugünkü davranışa eşitliği, TOML yükleme, tanınmayan anahtar/tip/aralık reddi, round-trip, `--set` | ✅ |
+| CLI | `tests/unit/test_cli.py` | `--set` > bayrak > config > varsayılan önceliği, bayrak→ayar eşlemesi, DXF sürüm doğrulaması, `Job`/`Config` ayrımı, çıkış kodları | ✅ |
 
 ## Integration Tests
 

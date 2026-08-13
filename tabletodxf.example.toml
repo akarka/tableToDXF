@@ -1,42 +1,94 @@
-# tabletodxf config örneği.
+# tabletodxf ayar dosyası — tam referans.
 #
 # Kullanmak için `tabletodxf.toml` adıyla çalışma dizinine kopyalayın; araç onu
-# kendiliğinden bulur. Başka bir yol için `--config` kullanın.
+# kendiliğinden bulur. Başka bir yol için `--config`.
 #
-# Öncelik: CLI bayrağı > bu dosya > yerleşik varsayılan.
+# Buradaki her değer **yerleşik varsayılandır** — bu dosyayı olduğu gibi
+# kullanmak davranışı değiştirmez. İstediğiniz satırı değiştirin, gerisini
+# silebilirsiniz; verilmeyen her ayar varsayılanında kalır.
 #
-# Config yüzeyi kasıtlı olarak küçüktür. Görünümle ilgili her şey `.ods`'ten
-# gelir (ADR-002); buraya yalnızca formatın taşıyamadığı şeyler girer.
+# Öncelik: --set > adanmış CLI bayrağı > bu dosya > yerleşik varsayılan.
+# Tanınmayan bir bölüm ya da anahtar **hata**dır (yazım hatası sessizce
+# geçmesin diye).
+#
+# Ayrıntılı gerekçeler: DOCS/Features/F-002.md
 
-# 1 cm kaç çizim birimi. Ofis standardı 1 birim = 1 mm ise 10.0 doğrudur.
-scale_cm_to_units = 10.0
 
-# Tablonun dış sınırındaki çerçeve kalınlığı (mm). 0 = çerçeve yok.
-# Ayrı bir dikdörtgen eklenmez; var olan dış ızgara parçaları yükseltilir, yani
-# çerçeve zeminin sınırıyla birebir çakışır. Sayfadaki daha kalın bir dış
-# kenarlık asla inceltilmez — bu değer yalnızca bir taban.
-frame_mm = 0.35
+# ── Kaynak .ods'in söylemediği şeyler ───────────────────────────────────────
+# Sayfa bir değeri veriyorsa her zaman sayfa kazanır (ADR-002); buradakiler
+# yalnızca bilgi yokken devreye girer.
+[source]
+default_col_width_mm  = 22.58     # .ods'te tanımsız sütun (Calc varsayılanı)
+default_row_height_mm = 4.52      # tanımsız satır
+default_padding_mm    = 0.97      # fo:padding yoksa hücre iç boşluğu
+default_font_size_pt  = 10.0
+default_text_color    = "#000000"
+default_border_color  = "#000000"
+borderless_width_pt   = 0.5       # "solid #000" gibi kalınlıksız kenarlık; 0 = çizme
+default_v_align       = "bottom"  # top | middle | bottom
+# Açık hizalaması olmayan hücrede değer tipine göre karar (Calc davranışı).
+align_numeric = "right"           # sayı, tarih, para
+align_boolean = "center"
+align_text    = "left"
+# SRC_STALE uyarısı için yanında aranan kardeş dosyalar. [] = kontrol kapalı.
+stale_check_suffixes = [".xlsx", ".xls", ".xlsm"]
 
-# R2013 ve üstü. Daha eskisi TTF metin stilini taşıyamaz (Kiril/CJK bozulur).
-dxf_version = "R2013"
 
-# Hücreye sığmayan metin ne olsun:
-#   "condense" → metin hücreye sığacak şekilde yatay sıkıştırılır (varsayılan).
-#                AutoCAD heceleme yapmadığı için, boşluksuz uzun metinlerde
-#                sığdırmanın tek yolu bu; elle düzeltme gerektirmez
-#   "mtext"    → tanımlı genişliği hücrenin metin alanına eşit MTEXT kutusu;
-#                AutoCAD'de genişlik tutamağıyla düzeltilebilir
-#   "marker"   → hücreyi dolduran ###
-#   "full"     → metnin tamamı yazılır, hücre sınırını taşar
-# Dördü de _OVERFLOW katmanını kullanır; hiçbirinde kırpma yapılmaz.
-overflow = "condense"
+# ── Geometri ────────────────────────────────────────────────────────────────
+[layout]
+scale_cm_to_units = 10.0   # 1 cm kaç çizim birimi (çizim mm ise 10 doğrudur)
+frame_mm          = 0.35   # dış çerçeve kalınlığı; 0 = çerçeve yok
+line_spacing      = 1.0    # çok satırlı hücrede satır adımının em çarpanı
 
+
+# ── Metin stili ve ölçüm ────────────────────────────────────────────────────
 [text]
 # Hedef çizimdeki aynı adlı bir stil bunu sessizce ezmesin diye tekil bir ad.
 style_name = "ONCU_TBL_TEXT"
 # Tam yol da verilebilir. Hedef AutoCAD makinesinde de kurulu olmalı.
-font_file = "NotoSans-Regular.ttf"
+font_file  = "NotoSans-Regular.ttf"
+# Fontta OS/2.sCapHeight yoksa büyük harf yüksekliği oranı.
+fallback_cap_ratio = 0.70
 
+
+# ── Hücreye sığmayan metin ──────────────────────────────────────────────────
+[overflow]
+#   "condense" → hücreye sığacak şekilde yatay sıkıştır (varsayılan). AutoCAD
+#                heceleme yapmadığı için boşluksuz uzun metinlerde tek çare
+#   "mtext"    → genişliği hücreye eşit MTEXT; AutoCAD'de tutamakla ayarlanır
+#   "marker"   → hücreyi dolduran ###
+#   "full"     → metnin tamamı yazılır, hücre sınırını taşar
+# Dördü de _OVERFLOW katmanını kullanır; hiçbirinde kırpma yapılmaz.
+mode             = "condense"
+marker_char      = "#"
+min_width_factor = 0.25   # condense okunabilirlik tabanı; altına inilmez
+
+
+# ── Zemin ───────────────────────────────────────────────────────────────────
+# Calc'ta "dolgu yok" olan hücre ekranda beyaz görünür, saydam değil. Kapatmak
+# tabloyu şeffaf yapar — mevcut çizimin üstüne bindirmek istendiğinde işe yarar.
+[background]
+enabled = true
+color   = "#ffffff"
+
+
+# ── Katmanlar ───────────────────────────────────────────────────────────────
+# Katman adı = prefix + sonek. Renkler ACI (1–255).
 [layers]
-# Katmanlar işlev taşır, stil değil: _GRID, _TEXT, _FILL, _OVERFLOW.
-prefix = "ONCU_TBL"
+prefix          = "ONCU_TBL"
+grid_suffix     = "_GRID"
+text_suffix     = "_TEXT"
+fill_suffix     = "_FILL"
+overflow_suffix = "_OVERFLOW"
+grid_color      = 7
+text_color      = 7
+fill_color      = 7
+overflow_color  = 1        # kırmızı: ### içerik değil, teşhis çıktısıdır
+
+
+# ── DXF çıktısı ─────────────────────────────────────────────────────────────
+[output]
+dxf_version            = "R2013"   # R2013 ve üstü; eskisi TTF stili taşımaz
+insert_block_reference = true      # blok tanımının yanına model uzayına bir INSERT
+block_base_point       = [0.0, 0.0]
+write_report           = true      # başarılı çalıştırmada .report.txt

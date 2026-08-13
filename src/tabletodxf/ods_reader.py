@@ -15,6 +15,7 @@ from odf import teletype
 from odf.namespaces import OFFICENS, STYLENS, TABLENS, TEXTNS
 from odf.opendocument import load as load_odf
 
+from .config import SourceConfig
 from .errors import (
     FORMULA_NO_CACHE,
     MERGE_CROSSES_SELECTION,
@@ -43,18 +44,6 @@ from .report import Report
 # ODF'in mutlak tavanı. Bunun ötesi ayrıştırma hatası değil, kullanım hatasıdır.
 MAX_ROWS = 1_048_576
 MAX_COLS = 16_384
-
-# Kaynakta tanımlanmamış satır/sütunlar için LibreOffice Calc varsayılanları.
-# AC-5 seçimin sonundaki boş satırların çizilmesini istiyor; Calc bu satırları
-# dosyaya yazmadığı için bir varsayılana ihtiyaç var.
-DEFAULT_COL_WIDTH_MM = 22.58
-DEFAULT_ROW_HEIGHT_MM = 4.52
-
-# `fo:padding` bulunamadığında kullanılan değer (F-001 Open Question).
-# LibreOffice'in `Default` hücre stiline yazdığı 0.097cm ile aynı.
-DEFAULT_PADDING_MM = 0.97
-
-DEFAULT_FONT_SIZE_PT = 10.0
 
 # Sayı gibi davranan değer tipleri — hizalama kaynağı `value-type` olduğunda
 # bunlar sağa, gerisi sola yaslanır (Calc'ın varsayılan davranışı).
@@ -109,20 +98,25 @@ def parse_color(value: str | None) -> Rgb | None:
     return None
 
 
-def parse_border(value: str | None) -> Border:
+def parse_border(
+    value: str | None,
+    *,
+    default_color: Rgb = BLACK,
+    borderless_width_pt: float = 0.5,
+) -> Border:
     """`"0.06pt solid #000000"` → `Border(0.021, (0,0,0))`.
 
     `double` / `dashed` gibi çizgi biçimleri tek bir çizgiye indirgenir: DXF'te
     kenarlık bir `LWPOLYLINE` ve taşıdığı tek görsel nitelik kalınlık ile renk.
     """
     if not value:
-        return Border(0.0, BLACK)
+        return Border(0.0, default_color)
     text = value.strip()
     if text.lower() in ("none", "hidden", ""):
-        return Border(0.0, BLACK)
+        return Border(0.0, default_color)
 
     width_mm = 0.0
-    color: Rgb = BLACK
+    color: Rgb = default_color
     for token in text.split():
         parsed_color = parse_color(token)
         if parsed_color is not None:
@@ -133,7 +127,8 @@ def parse_border(value: str | None) -> Border:
     if width_mm <= 0.0:
         # "solid #000000" — kalınlık verilmemiş. Görünür bir kenarlık istendiği
         # kesin, o yüzden hairline kabul edilir; 0 döndürmek çizgiyi yok ederdi.
-        width_mm = parse_length_mm("0.5pt")
+        # `borderless_width_pt = 0` verilirse böyle kenarlıklar çizilmez.
+        width_mm = borderless_width_pt * (25.4 / 72.0)
     return Border(width_mm, color)
 
 
@@ -292,7 +287,9 @@ def _repeat_count(element, attr: str, limit: int) -> int:  # noqa: ANN001
     return max(1, min(count, limit))
 
 
-def _collect_columns(table, needed: int, resolver: _StyleResolver) -> _Axis:  # noqa: ANN001
+def _collect_columns(  # noqa: ANN001
+    table, needed: int, resolver: _StyleResolver, default_width_mm: float
+) -> _Axis:
     axis = _Axis([], [], [])
 
     def walk(node) -> None:  # noqa: ANN001
@@ -302,7 +299,7 @@ def _collect_columns(table, needed: int, resolver: _StyleResolver) -> _Axis:  # 
             qname = getattr(child, "qname", None)
             if qname == (TABLENS, "table-column"):
                 width = parse_length_mm(
-                    _column_width(child, resolver), DEFAULT_COL_WIDTH_MM
+                    _column_width(child, resolver), default_width_mm
                 )
                 hidden = _is_hidden(child)
                 default_style = child.getAttrNS(TABLENS, "default-cell-style-name")
@@ -320,7 +317,7 @@ def _collect_columns(table, needed: int, resolver: _StyleResolver) -> _Axis:  # 
 
     walk(table)
     while len(axis.sizes_mm) < needed:
-        axis.sizes_mm.append(DEFAULT_COL_WIDTH_MM)
+        axis.sizes_mm.append(default_width_mm)
         axis.hidden.append(False)
         axis.default_cell_style.append(None)
     return axis
@@ -445,8 +442,10 @@ def read(
     sheet_name: str,
     range_text: str,
     report: Report,
+    config: SourceConfig | None = None,
 ) -> SheetModel:
     """`.ods` dosyasından seçilen aralığı okur ve `SheetModel` döndürür."""
+    config = config or SourceConfig()
     source = Path(path)
     if source.suffix.lower() != ".ods":
         raise TableToDxfError(
@@ -461,7 +460,7 @@ def read(
             SRC_NOT_FOUND, op="read_source", reason="file not found", file=str(source)
         )
 
-    _warn_if_stale(source, report)
+    _warn_if_stale(source, report, config.stale_check_suffixes)
 
     r0, c0, r1, c1 = parse_range(range_text)
     source_ref = f"{sheet_name}!{range_text.strip().upper()}"
@@ -481,14 +480,16 @@ def read(
     report.debug("read_source", "sheet opened", cell=source_ref, sheets=len(available))
 
     resolver = _CellStyleResolver(doc)
-    columns = _collect_columns(table, c1 + 1, resolver)
+    columns = _collect_columns(table, c1 + 1, resolver, config.default_col_width_mm)
 
     # Satırlar: seçim sonuna kadar oku. Birleştirme tespiti seçimin üstündeki ve
     # solundaki hücreleri de gerektirdiği için 0'dan başlanır.
     rows_meta: list[tuple[float, bool, str | None]] = []
     grid: list[list[_RawCell | None]] = []
     for row_element in _iter_rows(table, r1 + 1):
-        height = parse_length_mm(_row_height(row_element, resolver), DEFAULT_ROW_HEIGHT_MM)
+        height = parse_length_mm(
+            _row_height(row_element, resolver), config.default_row_height_mm
+        )
         rows_meta.append(
             (
                 height,
@@ -498,7 +499,7 @@ def read(
         )
         grid.append(_read_row_cells(row_element, c1 + 1))
     while len(rows_meta) <= r1:
-        rows_meta.append((DEFAULT_ROW_HEIGHT_MM, False, None))
+        rows_meta.append((config.default_row_height_mm, False, None))
         grid.append([None] * (c1 + 1))
 
     _check_merges(grid, r0, c0, r1, c1, sheet_name)
@@ -567,6 +568,7 @@ def read(
                 props=props,
                 col_span=col_span,
                 row_span=row_span,
+                config=config,
             )
             model.cells[(cell.row, cell.col)] = cell
 
@@ -598,29 +600,30 @@ def _build_cell(
     props: _StyleProps,
     col_span: int,
     row_span: int,
+    config: SourceConfig,
 ) -> Cell:
     cell_props = props.cell
     text_props = props.text
 
-    padding = _padding_mm(cell_props)
+    padding = _padding_mm(cell_props, config.default_padding_mm)
     borders = Borders(
-        left=_border_side(cell_props, "left"),
-        right=_border_side(cell_props, "right"),
-        top=_border_side(cell_props, "top"),
-        bottom=_border_side(cell_props, "bottom"),
+        left=_border_side(cell_props, "left", config),
+        right=_border_side(cell_props, "right", config),
+        top=_border_side(cell_props, "top", config),
+        bottom=_border_side(cell_props, "bottom", config),
     )
     font = FontSpec(
-        size_pt=parse_length_pt(text_props.get("font-size"), DEFAULT_FONT_SIZE_PT),
+        size_pt=parse_length_pt(text_props.get("font-size"), config.default_font_size_pt),
         bold=text_props.get("font-weight", "normal") not in ("normal", "", "100", "200", "300"),
         italic=text_props.get("font-style", "normal") in ("italic", "oblique"),
-        color=parse_color(text_props.get("color")) or BLACK,
+        color=parse_color(text_props.get("color")) or config.default_text_color,
     )
     return Cell(
         row=row,
         col=col,
         text=raw.text if raw else "",
-        h_align=_h_align(props, raw),
-        v_align=_v_align(cell_props),
+        h_align=_h_align(props, raw, config),
+        v_align=_v_align(cell_props, config.default_v_align),
         font=font,
         borders=borders,
         fill=parse_color(cell_props.get("background-color")),
@@ -661,7 +664,7 @@ def parse_length_pt(value: str | None, default: float) -> float:
     return mm / (25.4 / 72.0)
 
 
-def _padding_mm(cell_props: dict[str, str]) -> float:
+def _padding_mm(cell_props: dict[str, str], default_mm: float) -> float:
     """Yatay yerleşimde kullanılan tek bir dolgu değeri.
 
     Sol ve sağ ayrı verilmişse büyüğü alınır: metin her iki kenardan da güvenli
@@ -677,15 +680,19 @@ def _padding_mm(cell_props: dict[str, str]) -> float:
         return max(present)
     if uniform >= 0.0:
         return uniform
-    return DEFAULT_PADDING_MM
+    return default_mm
 
 
-def _border_side(cell_props: dict[str, str], side: str) -> Border:
+def _border_side(cell_props: dict[str, str], side: str, config: SourceConfig) -> Border:
     """Kenar başına değer, kısayol `fo:border`'ı ezer."""
-    specific = cell_props.get(f"border-{side}")
-    if specific is not None:
-        return parse_border(specific)
-    return parse_border(cell_props.get("border"))
+    raw = cell_props.get(f"border-{side}")
+    if raw is None:
+        raw = cell_props.get("border")
+    return parse_border(
+        raw,
+        default_color=config.default_border_color,
+        borderless_width_pt=config.borderless_width_pt,
+    )
 
 
 _H_ALIGN_MAP: dict[str, HAlign] = {
@@ -698,38 +705,41 @@ _H_ALIGN_MAP: dict[str, HAlign] = {
 }
 
 
-def _h_align(props: _StyleProps, raw: _RawCell | None) -> HAlign:
+def _h_align(props: _StyleProps, raw: _RawCell | None, config: SourceConfig) -> HAlign:
     """Açık hizalama yoksa Calc'ın değer tipine göre kararı taklit edilir.
 
     Sayfada sağa yaslı görünen bir sayının çizimde sola kaymaması için gerekli;
     `.ods` bu durumda `fo:text-align` yazmaz, `style:text-align-source` alanını
-    `value-type` bırakır.
+    `value-type` bırakır. Tip başına hizalama `[source]` altından değiştirilebilir.
     """
     explicit = props.paragraph.get("text-align")
     source = props.cell.get("text-align-source", "fix")
     if explicit and source != "value-type":
-        return _H_ALIGN_MAP.get(explicit.lower(), "left")
+        return _H_ALIGN_MAP.get(explicit.lower(), config.align_text)
     value_type = raw.value_type if raw else None
     if value_type in _NUMERIC_VALUE_TYPES:
-        return "right"
+        return config.align_numeric
     if value_type == "boolean":
-        return "center"
+        return config.align_boolean
     if explicit:
-        return _H_ALIGN_MAP.get(explicit.lower(), "left")
-    return "left"
+        return _H_ALIGN_MAP.get(explicit.lower(), config.align_text)
+    return config.align_text
 
 
 _V_ALIGN_MAP: dict[str, VAlign] = {
     "top": "top",
     "middle": "middle",
     "bottom": "bottom",
-    "automatic": "bottom",
+    # `automatic` haritada yok: yapılandırılmış varsayılana düşmesi gerekiyor,
+    # `_v_align` onu ayrıca yakalıyor.
 }
 
 
-def _v_align(cell_props: dict[str, str]) -> VAlign:
+def _v_align(cell_props: dict[str, str], default: VAlign) -> VAlign:
     raw = (cell_props.get("vertical-align") or "").lower()
-    return _V_ALIGN_MAP.get(raw, "bottom")
+    if raw == "automatic":
+        return default
+    return _V_ALIGN_MAP.get(raw, default)
 
 
 def _mark_covered(model: SheetModel) -> None:
@@ -804,9 +814,12 @@ def _find_table(doc, sheet_name: str):  # noqa: ANN001
     )
 
 
-def _warn_if_stale(source: Path, report: Report) -> None:
-    """ADR-001'in ürettiği tek yeni hata modu: `.ods` bayat kalmış olabilir."""
-    for suffix in (".xlsx", ".xls", ".xlsm"):
+def _warn_if_stale(source: Path, report: Report, suffixes: tuple[str, ...]) -> None:
+    """ADR-001'in ürettiği tek yeni hata modu: `.ods` bayat kalmış olabilir.
+
+    `suffixes` boş verilirse kontrol tamamen kapanır.
+    """
+    for suffix in suffixes:
         sibling = source.with_suffix(suffix)
         try:
             if sibling.is_file() and sibling.stat().st_mtime > source.stat().st_mtime:
