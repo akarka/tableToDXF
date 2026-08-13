@@ -24,18 +24,23 @@ This is the single source of truth for all feature work. Agents must check this 
 |----|---------|--------|-------|-------------|
 | F-001 | `.ods` seçiminden DXF tablo bloğu üretimi | `REVIEW` | Claude Code | [F-001.md](F-001.md) |
 | F-002 | Ayar yüzeyi — tipli konfigürasyon katmanı | `REVIEW` | Claude Code | [F-002.md](F-002.md) |
+| F-003 | Masaüstü UI | `REVIEW` | Claude Sonnet 5 | [F-003.md](F-003.md) |
 
 `REVIEW` gerekçesi (F-001): kod tamam; **Manual Verification** adımları (AutoCAD'de görsel
 karşılaştırma, blok yeniden tanımlama, `ETRANSMIT`) insana bağlı ve bekliyor.
 
-`REVIEW` gerekçesi (F-002): kod ve testler tamam, 252 test geçiyor. Aracı bir masaüstü
+`REVIEW` gerekçesi (F-002): kod ve testler tamam, 277 test geçiyor. Aracı bir masaüstü
 uygulamasına dönüştürme yolunun ilk adımıydı: kodun içine gömülü her davranış değeri tipli bir
 ayara çıktı, CLI korundu, UI ve suite'in bağlanacağı şema doğdu (`Config` / `Job` / `convert()`).
-Mimari gerekçeler ADR-003 ve ADR-004'te.
+Ayrıca profil yönetimi eklendi (`%LOCALAPPDATA%\OncuCAD\TableToDXF\profiles\`). Mimari
+gerekçeler ADR-003 ve ADR-004'te.
 
-Sıradaki: **F-003 — masaüstü UI.** F-002'nin açık bıraktığı iki soru UI'a başlamadan
-netleşmeli (bkz. F-002 → Open Questions): ayar profilleri gerekecek mi, ve ayar dosyası
-kullanıcı başına (`%APPDATA%`) da aranacak mı.
+`REVIEW` gerekçesi (F-003): `tkinter` tabanlı masaüstü UI — profil çubuğu, `.ods`/sayfa/aralık
+girdisi, `Config`'in yedi bölümünden otomatik üretilen ayar sekmeleri, ayrı iş parçacığında
+çalışan dönüştürme ve canlı rapor akışı. Toplam 360 test geçiyor (83'ü UI'a özgü). Gerçek bir
+Tk penceresiyle (görsel değil, programatik) ve gerçek bir `.ods`'le uçtan uca doğrulandı — bkz.
+F-003 → Test Plan. **PyInstaller paketlemesi ve görsel manuel doğrulama** (F-003 → Manual
+Verification) insana bağlı ve bekliyor.
 
 ---
 

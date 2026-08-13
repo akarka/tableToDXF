@@ -17,10 +17,12 @@ from pathlib import Path
 from .api import Job, convert, resolve_font  # noqa: F401 — resolve_font geriye dönük dışa açık
 from .config import (
     DEFAULT_CONFIG_NAME,
+    DEFAULT_PROFILE_NAME,
     Config,
     apply_overrides,
     find_config_file,
     load_config,
+    load_profile,
 )
 from .errors import CONFIG_INVALID, TableToDxfError, UsageError
 from .report import Report
@@ -65,8 +67,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Varsayılanlar bilinçli olarak None: bayrağın açıkça verilip verilmediğini
     # ayırt edemezsek config dosyası yerleşik varsayılanı hiçbir zaman ezemez.
-    parser.add_argument(
+    config_source = parser.add_mutually_exclusive_group()
+    config_source.add_argument(
         "--config", default=None, help=f"config yolu (varsayılan ./{DEFAULT_CONFIG_NAME})"
+    )
+    config_source.add_argument(
+        "--profile",
+        default=None,
+        help=(
+            "kayıtlı profil adı (UI'ın kaydettiği ayar seti); "
+            f"'{DEFAULT_PROFILE_NAME}' varsayılan profildir. --config ile birlikte kullanılamaz"
+        ),
     )
     parser.add_argument("--scale", type=float, default=None, help="1 cm kaç çizim birimi")
     parser.add_argument(
@@ -108,7 +119,9 @@ def build_config(args: argparse.Namespace, cwd: Path | None = None) -> Config:
     dönüşüm ya da doğrulama farkı oluşamaz.
     """
     cwd = cwd or Path.cwd()
-    if args.config:
+    if args.profile:
+        config = load_profile(args.profile)
+    elif args.config:
         config = load_config(args.config, required=True)
     else:
         config = load_config(find_config_file(cwd), required=False)

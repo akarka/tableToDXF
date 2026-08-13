@@ -13,6 +13,7 @@ birebir üretir (F-002 AC-1). Bu bir golden testle sabitlenmiştir.
 
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
@@ -28,6 +29,16 @@ OverflowMode = Literal["condense", "mtext", "marker", "full"]
 WHITE: Rgb = (255, 255, 255)
 
 DEFAULT_CONFIG_NAME = "tabletodxf.toml"
+
+# Profiller burada saklanır — proje klasöründen bağımsız, kullanıcı başına.
+# `LOCALAPPDATA` (roaming değil) seçildi: profiller makineye özgüdür, ağ
+# profili senkronizasyonuyla taşınması istenmez. "OncuCAD" klasörü bilinçli:
+# araç ileride bir suite'e taşınacak (ADR-003); o suite'in diğer araçları da
+# aynı kök altında kendi alt klasörlerini açabilir.
+_APP_VENDOR = "OncuCAD"
+_APP_NAME = "TableToDXF"
+DEFAULT_PROFILE_NAME = "Varsayılan"
+_PROFILE_FORBIDDEN_CHARS = frozenset('\\/:*?"<>|')
 
 
 # ── Bölümler ────────────────────────────────────────────────────────────────
@@ -516,3 +527,105 @@ def find_config_file(cwd: Path) -> Path | None:
     """Çalışma dizinindeki varsayılan config dosyası, varsa."""
     candidate = cwd / DEFAULT_CONFIG_NAME
     return candidate if candidate.is_file() else None
+
+
+# ── Profil yönetimi ──────────────────────────────────────────────────────────
+#
+# Ofiste birden çok tablo tipi (mahal listesi, çizim listesi, metraj) farklı
+# ayar ister. Her profil, `profiles_dir()` altında kendi adıyla bir `.toml`
+# dosyasıdır — `Config`'in kendisiyle aynı serileştirme, tek fark konumu.
+# UI'ın "profil seç / kaydet / farklı kaydet / sil" akışı doğrudan bunlara
+# bağlanır; CLI'da `--profile <ad>`, `--config <yol>`'un bir kısayolu gibi
+# çalışır (F-002 Open Questions → Ayar profilleri, 2026-08-13).
+
+
+def app_data_dir() -> Path:
+    """Kullanıcı başına, makineye özgü veri kökü.
+
+    Windows'ta `%LOCALAPPDATA%\\OncuCAD\\TableToDXF`. `LOCALAPPDATA`
+    tanımsızsa (Windows dışı geliştirme/test ortamı) taşınabilir bir yedeğe
+    düşülür; üretim hedefi yalnızca Windows'tur (F-001).
+    """
+    base = os.environ.get("LOCALAPPDATA")
+    root = Path(base) if base else Path.home() / ".local" / "share"
+    return root / _APP_VENDOR / _APP_NAME
+
+
+def profiles_dir() -> Path:
+    return app_data_dir() / "profiles"
+
+
+def _sanitize_profile_name(name: str) -> str:
+    """Profil adını doğrular; dosya adı olarak da kullanılır.
+
+    Görünen ad ile dosya adı **kasıtlı olarak aynı** — ayrı bir eşleme
+    tablosu, ismi değiştirilmiş ama dosyası yeniden adlandırılmamış bir
+    profille sonuçlanabilirdi. Türkçe karakter ve boşluk NTFS'te sorunsuz;
+    yasaklanan yalnızca Windows'un dosya adında izin vermediği karakterler.
+    """
+    trimmed = name.strip()
+    if not trimmed:
+        raise _invalid("profile", name, "profil adı boş olamaz")
+    bad = _PROFILE_FORBIDDEN_CHARS & set(trimmed)
+    if bad:
+        raise _invalid(
+            "profile",
+            name,
+            'profil adı şu karakterleri içeremez: \\ / : * ? " < > |',
+        )
+    return trimmed
+
+
+def _profile_path(name: str) -> Path:
+    return profiles_dir() / f"{_sanitize_profile_name(name)}.toml"
+
+
+def list_profiles() -> list[str]:
+    """Var olan profil adları, alfabetik. Klasör yoksa boş liste."""
+    directory = profiles_dir()
+    if not directory.is_dir():
+        return []
+    return sorted(path.stem for path in directory.glob("*.toml"))
+
+
+def load_profile(name: str) -> Config:
+    path = _profile_path(name)
+    if not path.is_file():
+        raise _invalid(name, "", "profil bulunamadı")
+    return load_config(path)
+
+
+def save_profile(name: str, config: Config) -> Path:
+    """Profili kaydeder; aynı adlı profil sessizce üzerine yazılır."""
+    return save_config(config, _profile_path(name))
+
+
+def delete_profile(name: str) -> None:
+    """Profili siler. Yoksa sessizce geçer — silme işleminin sonucu aynı."""
+    path = _profile_path(name)
+    if path.is_file():
+        path.unlink()
+
+
+def rename_profile(old_name: str, new_name: str) -> Path:
+    old_path = _profile_path(old_name)
+    new_path = _profile_path(new_name)
+    if not old_path.is_file():
+        raise _invalid(old_name, "", "profil bulunamadı")
+    if new_path.exists():
+        raise _invalid(new_name, "", "bu adda bir profil zaten var")
+    old_path.rename(new_path)
+    return new_path
+
+
+def ensure_default_profile() -> Path:
+    """İlk çalıştırmada `Varsayılan` profilini yerleşik değerlerle oluşturur.
+
+    Zaten varsa dokunmaz — kullanıcının `Varsayılan`ı düzenlemiş olma ihtimali
+    her zaman var; UI açılışta bunu çağırıp listenin hiçbir zaman boş
+    olmayacağından emin olur.
+    """
+    path = _profile_path(DEFAULT_PROFILE_NAME)
+    if not path.is_file():
+        save_config(Config(), path)
+    return path

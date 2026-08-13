@@ -43,7 +43,8 @@ PYTHONPATH=src python -m tabletodxf mahal.ods --sheet Mahal --range B2:E7 \
 | `--range` | — | zorunlu; `B3:C500` biçiminde |
 | `--out` | — | zorunlu; çıktı DXF yolu |
 | `--block` | — | zorunlu; blok adı |
-| `--config` | `./tabletodxf.toml` varsa | config dosyası yolu |
+| `--config` | `./tabletodxf.toml` varsa | config dosyası yolu (`--profile` ile birlikte kullanılamaz) |
+| `--profile` | — | kayıtlı profil adı (UI'da oluşturulan ayar seti); bkz. "Profiller" |
 | `--scale` | `10.0` | 1 cm kaç çizim birimi |
 | `--frame` | `0.35` | tablonun dış sınırındaki çerçeve kalınlığı, mm (`0` = kapalı) |
 | `--overflow` | `condense` | `condense` \| `mtext` \| `marker` \| `full` — aşağıya bakın |
@@ -93,6 +94,46 @@ gerekçeleriyle birlikte [`DOCS/Features/F-002.md`](DOCS/Features/F-002.md).
 
 Tanınmayan bir bölüm ya da anahtar **hatadır** ve çıktı üretilmeden durur — bir yazım hatası,
 ayarın uygulanmadığını fark ettirmeden geçmesin diye.
+
+---
+
+## Profiller
+
+Ofiste birden çok tablo tipi (mahal listesi, çizim listesi, metraj) farklı ayar ister. Bunun için
+adlandırılmış, kalıcı `Config` kayıtları — **profiller** — var; UI'dan (`Kaydet` / `Farklı Kaydet`)
+yönetilir, CLI'dan da kullanılabilir:
+
+```bash
+tabletodxf mahal.ods --sheet Mahal --range B2:F40 --out t.dxf --block T --profile "Mahal Listesi"
+```
+
+Profiller `%LOCALAPPDATA%\OncuCAD\TableToDXF\profiles\<ad>.toml` altında durur — proje
+klasöründen bağımsız, kullanıcı başına, makineye özgü. `--profile`, `--config`'in yerini alan bir
+kısayoldur; ikisi birlikte verilemez. Ayrıntılar: [`DOCS/Features/F-002.md`](DOCS/Features/F-002.md#profil-yönetimi).
+
+---
+
+## Masaüstü Uygulaması (UI)
+
+Komut satırı görmeden kullanmak için `tkinter` tabanlı bir arayüz var (F-003, ADR-004). CLI
+**kaybolmaz** — ikisi de aynı `Config`/`Job`/`convert()` yüzeyini kullanır, davranış ayrışmaz.
+
+```bash
+tabletodxf-ui                    # kurulumdan sonra (pip install -e . ile gelir)
+PYTHONPATH=src python -m tabletodxf.ui   # kurulum olmadan
+```
+
+Pencere: profil çubuğu (yükle/kaydet/farklı kaydet/sil), `.ods` seçimi (sayfa açılır kutusu
+otomatik dolar), yedi ayar sekmesi (`Config`'in her bölümü için bir tane — F-002 kataloğundan
+otomatik üretilir), **Çalıştır** düğmesi ve canlı akan bir rapor bölmesi. Dönüştürme ayrı bir iş
+parçacığında çalışır; büyük bir tabloda bile pencere donmaz.
+
+Ayar formu `Config` şemasından üretilir: F-002'ye yeni bir ayar eklendiğinde UI otomatik büyür,
+ayrı bir "arayüzü de güncelle" adımı gerekmez. Ayrıntılar ve mimari kararlar:
+[`DOCS/Features/F-003.md`](DOCS/Features/F-003.md).
+
+**Paketleme** (Python kurulu olmayan bir Win10+ makinede çalıştırmak için) `PyInstaller` ile,
+insan tarafından yapılır — bkz. [ADR-004](DOCS/Architecture/ADR_004_ui_and_packaging.md).
 
 ---
 
@@ -209,7 +250,7 @@ düzeltirsiniz; araç sessizce kaymış bir tablo üretmez.
 ## Geliştirme
 
 ```bash
-.venv/Scripts/python.exe -m pytest          # 245 test
+.venv/Scripts/python.exe -m pytest          # 360 test
 .venv/Scripts/python.exe -m pytest tests/unit -q
 ```
 

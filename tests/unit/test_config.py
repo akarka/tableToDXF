@@ -13,16 +13,32 @@ from pathlib import Path
 import pytest
 
 from tabletodxf.config import (
+    DEFAULT_PROFILE_NAME,
     Config,
     LayerConfig,
+    app_data_dir,
     apply_overrides,
     config_from_dict,
     config_to_dict,
+    delete_profile,
+    ensure_default_profile,
     find_config_file,
+    list_profiles,
     load_config,
+    load_profile,
+    profiles_dir,
+    rename_profile,
     save_config,
+    save_profile,
 )
 from tabletodxf.errors import CONFIG_INVALID, UsageError
+
+
+@pytest.fixture
+def isolated_app_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Profil testleri gerçek `%LOCALAPPDATA%`'a asla dokunmamalı."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    return app_data_dir()
 
 
 # ── Varsayılanlar bugünkü davranış (AC-1) ───────────────────────────────────
@@ -343,3 +359,122 @@ def test_override_validates_the_result() -> None:
     """Ezme sonrası da doğrulama çalışır; geçersiz değer sızmaz."""
     with pytest.raises(UsageError):
         apply_overrides(Config(), ["layout.frame_mm=-3"])
+
+
+# ── Profil yönetimi ──────────────────────────────────────────────────────────
+
+
+def test_app_data_dir_is_under_the_oncucad_vendor_folder(isolated_app_data: Path) -> None:
+    assert isolated_app_data.parts[-2:] == ("OncuCAD", "TableToDXF")
+
+
+def test_profiles_dir_does_not_exist_until_something_is_saved(
+    isolated_app_data: Path,
+) -> None:
+    assert not profiles_dir().exists()
+    assert list_profiles() == []
+
+
+def test_save_then_load_profile_roundtrips(isolated_app_data: Path) -> None:
+    config = apply_overrides(Config(), ["layers.prefix=PROJE"])
+    save_profile("Mahal Listesi", config)
+
+    assert load_profile("Mahal Listesi") == config
+    assert list_profiles() == ["Mahal Listesi"]
+
+
+def test_profiles_are_listed_in_a_stable_sorted_order(isolated_app_data: Path) -> None:
+    """Kod noktasına göre sıralama — yerel/Türkçe alfabetik değil.
+
+    Kasıtlı: bir `locale` bağımlılığı, makineler arası tutarsız sıralamaya
+    (ve test kırılganlığına) yol açardı. Birkaç profil arasında seçim yapan
+    bir açılır listede fark pratikte görünmez.
+    """
+    for name in ("Metraj", "Çizim Listesi", "Mahal Listesi"):
+        save_profile(name, Config())
+    assert list_profiles() == sorted(["Metraj", "Çizim Listesi", "Mahal Listesi"])
+
+
+def test_saving_the_same_profile_name_overwrites(isolated_app_data: Path) -> None:
+    save_profile("X", Config())
+    changed = apply_overrides(Config(), ["layout.frame_mm=1.5"])
+    save_profile("X", changed)
+
+    assert load_profile("X") == changed
+    assert list_profiles() == ["X"]
+
+
+def test_loading_a_missing_profile_is_an_error(isolated_app_data: Path) -> None:
+    with pytest.raises(UsageError) as excinfo:
+        load_profile("Yok Böyle Bir Şey")
+    assert excinfo.value.code == CONFIG_INVALID
+
+
+def test_delete_profile_removes_it(isolated_app_data: Path) -> None:
+    save_profile("Silinecek", Config())
+    assert "Silinecek" in list_profiles()
+
+    delete_profile("Silinecek")
+    assert list_profiles() == []
+
+
+def test_deleting_a_missing_profile_does_not_raise(isolated_app_data: Path) -> None:
+    delete_profile("Zaten Yok")  # sessizce geçer
+
+
+def test_rename_profile(isolated_app_data: Path) -> None:
+    config = apply_overrides(Config(), ["layers.prefix=X"])
+    save_profile("Eski Ad", config)
+
+    rename_profile("Eski Ad", "Yeni Ad")
+
+    assert list_profiles() == ["Yeni Ad"]
+    assert load_profile("Yeni Ad") == config
+
+
+def test_renaming_a_missing_profile_is_an_error(isolated_app_data: Path) -> None:
+    with pytest.raises(UsageError):
+        rename_profile("Yok", "Yeni")
+
+
+def test_renaming_onto_an_existing_profile_is_an_error(isolated_app_data: Path) -> None:
+    save_profile("A", Config())
+    save_profile("B", Config())
+    with pytest.raises(UsageError):
+        rename_profile("A", "B")
+    # İkisi de yerinde kalmalı — yarım bir yeniden adlandırma olmamalı.
+    assert set(list_profiles()) == {"A", "B"}
+
+
+@pytest.mark.parametrize("bad_name", ["", "   ", "a/b", "a\\b", "a:b", "a*b", 'a"b', "a<b>c", "a|b"])
+def test_forbidden_profile_names_are_rejected(isolated_app_data: Path, bad_name: str) -> None:
+    with pytest.raises(UsageError):
+        save_profile(bad_name, Config())
+
+
+def test_default_profile_is_created_on_first_call(isolated_app_data: Path) -> None:
+    assert list_profiles() == []
+    path = ensure_default_profile()
+
+    assert path.is_file()
+    assert list_profiles() == [DEFAULT_PROFILE_NAME]
+    assert load_profile(DEFAULT_PROFILE_NAME) == Config()
+
+
+def test_ensure_default_profile_does_not_overwrite_an_edited_default(
+    isolated_app_data: Path,
+) -> None:
+    """Kullanıcı `Varsayılan`ı düzenlemiş olabilir; ikinci çağrı onu ezmemeli."""
+    ensure_default_profile()
+    edited = apply_overrides(Config(), ["layers.prefix=DEGISTI"])
+    save_profile(DEFAULT_PROFILE_NAME, edited)
+
+    ensure_default_profile()
+
+    assert load_profile(DEFAULT_PROFILE_NAME) == edited
+
+
+def test_turkish_characters_in_profile_names_work(isolated_app_data: Path) -> None:
+    save_profile("Şişli Ğüç İç Ölçü", Config())
+    assert "Şişli Ğüç İç Ölçü" in list_profiles()
+    assert load_profile("Şişli Ğüç İç Ölçü") == Config()

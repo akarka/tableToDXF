@@ -161,6 +161,46 @@ def test_unknown_sheet_lists_available_names(reference_ods: Path, report: Report
     assert REFERENCE_SHEET in str(excinfo.value.fields["available"])
 
 
+# ── list_sheets (UI'ın sayfa seçim kutusu için) ─────────────────────────────
+
+
+def test_list_sheets_returns_the_sheet_name(reference_ods: Path) -> None:
+    assert ods_reader.list_sheets(reference_ods) == [REFERENCE_SHEET]
+
+
+def test_list_sheets_does_not_require_a_valid_range() -> None:
+    """Aralık okunmadan önce yalnızca sayfa listesi alınabilmeli."""
+    import inspect
+
+    assert "range_text" not in inspect.signature(ods_reader.list_sheets).parameters
+
+
+def test_list_sheets_rejects_non_ods_the_same_way_as_read(tmp_path: Path) -> None:
+    source = tmp_path / "tablo.xlsx"
+    source.write_bytes(b"")
+    with pytest.raises(TableToDxfError) as excinfo:
+        ods_reader.list_sheets(source)
+    assert excinfo.value.code == SRC_FORMAT
+
+
+def test_list_sheets_missing_file_stops(tmp_path: Path) -> None:
+    with pytest.raises(TableToDxfError) as excinfo:
+        ods_reader.list_sheets(tmp_path / "yok.ods")
+    assert excinfo.value.code == SRC_NOT_FOUND
+
+
+def test_list_sheets_returns_multiple_sheets_in_document_order(tmp_path: Path) -> None:
+    path = build_ods(
+        tmp_path / "coksayfa.ods",
+        [
+            SheetSpec(name="İlk", col_widths=["2cm"], rows=[]),
+            SheetSpec(name="İkinci", col_widths=["2cm"], rows=[]),
+            SheetSpec(name="Üçüncü", col_widths=["2cm"], rows=[]),
+        ],
+    )
+    assert ods_reader.list_sheets(path) == ["İlk", "İkinci", "Üçüncü"]
+
+
 def test_formula_without_cached_value_stops(tmp_path: Path, report: Report) -> None:
     path = build_ods(
         tmp_path / "formul.ods",

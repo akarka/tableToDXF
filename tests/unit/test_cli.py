@@ -22,7 +22,7 @@ from tabletodxf.cli import (
     main,
     validate_dxf_version,
 )
-from tabletodxf.config import Config, SourceConfig
+from tabletodxf.config import Config, SourceConfig, apply_overrides, save_profile
 from tabletodxf.errors import CONFIG_INVALID, FONT_NOT_FOUND, TableToDxfError, UsageError
 
 BASE_ARGS = [
@@ -139,6 +139,46 @@ def test_explicitly_named_missing_config_is_a_usage_error(tmp_path: Path) -> Non
     with pytest.raises(UsageError) as excinfo:
         build_config(parse(["--config", str(tmp_path / "yok.toml")]), cwd=tmp_path)
     assert excinfo.value.code == CONFIG_INVALID
+
+
+# ── Profil ───────────────────────────────────────────────────────────────────
+
+
+def test_profile_flag_loads_a_saved_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    saved = apply_overrides(Config(), ["layers.prefix=PROJE"])
+    save_profile("Mahal Listesi", saved)
+
+    config = build_config(parse(["--profile", "Mahal Listesi"]), cwd=tmp_path)
+    assert config.layers.prefix == "PROJE"
+
+
+def test_missing_profile_is_a_usage_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    with pytest.raises(UsageError) as excinfo:
+        build_config(parse(["--profile", "Yok Böyle Bir Şey"]), cwd=tmp_path)
+    assert excinfo.value.code == CONFIG_INVALID
+
+
+def test_profile_and_config_flags_are_mutually_exclusive() -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(BASE_ARGS + ["--profile", "X", "--config", "y.toml"])
+
+
+def test_dedicated_flags_still_override_a_loaded_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    save_profile("P", apply_overrides(Config(), ["layout.scale_cm_to_units=25"]))
+
+    config = build_config(
+        parse(["--profile", "P", "--scale", "5"]), cwd=tmp_path
+    )
+    assert config.layout.scale_cm_to_units == 5.0
 
 
 def test_broken_toml_is_a_usage_error(tmp_path: Path) -> None:

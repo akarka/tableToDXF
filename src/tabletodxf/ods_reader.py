@@ -437,16 +437,8 @@ def _read_row_cells(row, needed: int) -> list[_RawCell | None]:  # noqa: ANN001
 # ── Ana giriş ───────────────────────────────────────────────────────────────
 
 
-def read(
-    path: str | Path,
-    sheet_name: str,
-    range_text: str,
-    report: Report,
-    config: SourceConfig | None = None,
-) -> SheetModel:
-    """`.ods` dosyasından seçilen aralığı okur ve `SheetModel` döndürür."""
-    config = config or SourceConfig()
-    source = Path(path)
+def _validate_source(source: Path) -> None:
+    """Uzantı ve varlık denetimi. `read()` ile `list_sheets()` ortak ön adımı."""
     if source.suffix.lower() != ".ods":
         raise TableToDxfError(
             SRC_FORMAT,
@@ -460,13 +452,10 @@ def read(
             SRC_NOT_FOUND, op="read_source", reason="file not found", file=str(source)
         )
 
-    _warn_if_stale(source, report, config.stale_check_suffixes)
 
-    r0, c0, r1, c1 = parse_range(range_text)
-    source_ref = f"{sheet_name}!{range_text.strip().upper()}"
-
+def _load_ods(source: Path):  # noqa: ANN202
     try:
-        doc = load_odf(str(source))
+        return load_odf(str(source))
     except Exception as exc:  # noqa: BLE001 — zip/xml katmanı çok çeşitli hata atıyor
         raise TableToDxfError(
             SRC_NOT_FOUND,
@@ -476,6 +465,39 @@ def read(
             detail=type(exc).__name__,
         ) from exc
 
+
+def list_sheets(path: str | Path) -> list[str]:
+    """Bir `.ods` dosyasındaki sayfa adlarını, belge sırasında döndürür.
+
+    Aralık okumadan önce kullanıcının seçebileceği sayfa listesini almak
+    içindir (UI'ın sayfa açılır kutusu). Hücre içeriğine hiç bakmaz.
+    """
+    from odf.table import Table
+
+    source = Path(path)
+    _validate_source(source)
+    doc = _load_ods(source)
+    return [table.getAttrNS(TABLENS, "name") for table in doc.getElementsByType(Table)]
+
+
+def read(
+    path: str | Path,
+    sheet_name: str,
+    range_text: str,
+    report: Report,
+    config: SourceConfig | None = None,
+) -> SheetModel:
+    """`.ods` dosyasından seçilen aralığı okur ve `SheetModel` döndürür."""
+    config = config or SourceConfig()
+    source = Path(path)
+    _validate_source(source)
+
+    _warn_if_stale(source, report, config.stale_check_suffixes)
+
+    r0, c0, r1, c1 = parse_range(range_text)
+    source_ref = f"{sheet_name}!{range_text.strip().upper()}"
+
+    doc = _load_ods(source)
     table, available = _find_table(doc, sheet_name)
     report.debug("read_source", "sheet opened", cell=source_ref, sheets=len(available))
 

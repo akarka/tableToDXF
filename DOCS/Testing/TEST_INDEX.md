@@ -2,7 +2,7 @@
 
 Registry of all test suites. Update this when adding or removing test files.
 
-Toplam: **245 test**, tamamı geçiyor (2026-08-13).
+Toplam: **360 test**, tamamı geçiyor (2026-08-13).
 
 ---
 
@@ -14,8 +14,12 @@ Toplam: **245 test**, tamamı geçiyor (2026-08-13).
 | Ölçüm | `tests/unit/test_metrics.py` | TTF genişlik ölçümü, cap height, sığdı/sığmadı sınırları, eksik font/glif | ✅ |
 | Okuyucu | `tests/unit/test_ods_reader.py` | gizli satır/sütun, birleştirme + `covered`, görünen metin, hata kataloğu, `SRC_STALE` | ✅ |
 | Geometri | `tests/unit/test_geometry.py` | kenar tekilleştirme, eş doğrultulu birleştirme, birleşik alan iç ızgarası, hizalama, taşma modları, determinizm | ✅ |
-| Ayarlar | `tests/unit/test_config.py` | varsayılanların bugünkü davranışa eşitliği, TOML yükleme, tanınmayan anahtar/tip/aralık reddi, round-trip, `--set` | ✅ |
-| CLI | `tests/unit/test_cli.py` | `--set` > bayrak > config > varsayılan önceliği, bayrak→ayar eşlemesi, DXF sürüm doğrulaması, `Job`/`Config` ayrımı, çıkış kodları | ✅ |
+| Ayarlar | `tests/unit/test_config.py` | varsayılanların bugünkü davranışa eşitliği, TOML yükleme, tanınmayan anahtar/tip/aralık reddi, round-trip, `--set`, profil CRUD (kaydet/yükle/sil/yeniden adlandır) | ✅ |
+| CLI | `tests/unit/test_cli.py` | `--set` > bayrak > config > varsayılan önceliği, bayrak→ayar eşlemesi, DXF sürüm doğrulaması, `Job`/`Config` ayrımı, `--profile`, çıkış kodları | ✅ |
+| UI — formlar | `tests/unit/test_ui_forms.py` | tip→widget eşlemesi, metin↔değer round-trip (renk, nokta, liste, sayı), geçersiz girdi hataları — Tk kurmadan | ✅ |
+| UI — akış | `tests/unit/test_ui_streaming.py` | `Report` satırlarının kuyruğa sırayla düşmesi, `print`'in fazladan `"\n"`'i, `drain()` sınırı — Tk kurmadan | ✅ |
+| UI — alan meta | `tests/unit/test_ui_fields.py` | bilinmeyen alan/bölüm çökmeden ham adına düşüyor; F-002 kataloğu ile `config.py`'nin gerçek alanları arasında kanarya testi | ✅ |
+| Çekirdek yalıtımı | `tests/unit/test_core_purity.py` | `api`/`config`/`ods_reader`/`cli` `tkinter` içe aktarmıyor; `tkinter` yalnızca `ui/` altında geçiyor | ✅ |
 
 ## Integration Tests
 
@@ -28,8 +32,11 @@ Harici altyapı yok — DB, sunucu ya da ağ gerekmez. Font sistemde yoksa ölç
 
 ## E2E Tests
 
-Ayrı bir E2E katmanı yok: araç tek atımlık bir CLI, integration testleri zaten `main()` üzerinden
-gerçek dosya üretip geri okuyor.
+Ayrı bir otomatik E2E katmanı yok: CLI için integration testleri zaten `main()` üzerinden gerçek
+dosya üretip geri okuyor. UI için de eşdeğer bir koşum bu görev sırasında **elle** yapıldı —
+gerçek bir Tk kökü açılıp `MainWindow` kuruldu, gerçek bir `.ods` seçilip sayfa kutusu dolduruldu,
+`Job`/`Config` toplandı ve `_run_worker` gerçek bir DXF üretti (bkz. F-003 → Test Plan). Bu koşum
+otomatik pakette değil — CI/headless ortamda gerçek bir Tk kökü kurmak garanti olmadığı için.
 
 ---
 
@@ -64,5 +71,7 @@ ve sonda kenarlıklı boş bir satır.
 
 | Test | Reason Skipped | Owner | Deadline |
 |------|---------------|-------|----------|
-| Görsel doğruluk | CI'da test edilemez — F-001 → Manual Verification'da AutoCAD adımı olarak duruyor | insan | — |
+| Görsel doğruluk (DXF) | CI'da test edilemez — F-001 → Manual Verification'da AutoCAD adımı olarak duruyor | insan | — |
 | Blok yeniden tanımlama | AutoCAD gerektirir; F-001 Open Questions'ta açık madde | insan | — |
+| Görsel doğruluk (UI) | Tk penceresi headless ortamda anlamlı test edilemez — F-003 → Manual Verification | insan | — |
+| PyInstaller paketleme | Build insan tarafından yapılır (CLAUDE.md); F-003 AC-10 | insan | — |

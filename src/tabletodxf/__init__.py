@@ -18,6 +18,7 @@ suite için tek giriş noktasıdır ve `argparse`/`tkinter` yüklemez.
 
 from .api import Job, Result, convert
 from .config import (
+    DEFAULT_PROFILE_NAME,
     BackgroundConfig,
     Config,
     LayerConfig,
@@ -26,18 +27,28 @@ from .config import (
     OverflowConfig,
     SourceConfig,
     TextConfig,
+    app_data_dir,
     apply_overrides,
     config_from_dict,
     config_to_dict,
+    delete_profile,
+    ensure_default_profile,
+    list_profiles,
     load_config,
+    load_profile,
+    profiles_dir,
+    rename_profile,
     save_config,
+    save_profile,
 )
 from .errors import TableToDxfError, UsageError
+from .ods_reader import list_sheets
 from .report import Report
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
+    "DEFAULT_PROFILE_NAME",
     "BackgroundConfig",
     "Config",
     "Job",
@@ -51,10 +62,19 @@ __all__ = [
     "TableToDxfError",
     "TextConfig",
     "UsageError",
+    "app_data_dir",
     "apply_overrides",
     "config_from_dict",
     "config_to_dict",
     "convert",
+    "delete_profile",
+    "ensure_default_profile",
+    "list_profiles",
+    "list_sheets",
     "load_config",
+    "load_profile",
+    "profiles_dir",
+    "rename_profile",
     "save_config",
+    "save_profile",
 ]
