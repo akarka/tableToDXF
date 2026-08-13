@@ -45,7 +45,8 @@ PYTHONPATH=src python -m tabletodxf mahal.ods --sheet Mahal --range B2:E7 \
 | `--block` | — | zorunlu; blok adı |
 | `--config` | `./tabletodxf.toml` varsa | config dosyası yolu |
 | `--scale` | `10.0` | 1 cm kaç çizim birimi |
-| `--overflow` | `mtext` | `mtext` (düzenlenebilir kutu) \| `marker` (`###`) \| `full` (taşmasına izin ver) |
+| `--frame` | `0.35` | tablonun dış sınırındaki çerçeve kalınlığı, mm (`0` = kapalı) |
+| `--overflow` | `condense` | `condense` \| `mtext` \| `marker` \| `full` — aşağıya bakın |
 | `--text-style` | `ONCU_TBL_TEXT` | DXF metin stili adı |
 | `--font` | `NotoSans-Regular.ttf` | ölçüm ve stil için TTF |
 | `--layer-prefix` | `ONCU_TBL` | katman ad alanı |
@@ -72,16 +73,32 @@ PYTHONPATH=src python -m tabletodxf mahal.ods --sheet Mahal --range B2:E7 \
 
 ### Taşan hücreler
 
-Varsayılan `--overflow mtext`: hücresine sığmayan metin, **tanımlı genişliği hücrenin metin
-alanına eşit** bir `MTEXT` olarak çizilir (hücre genişliği eksi iki yandan dolgu). Metin gizlenmez,
-satır bölmeyi AutoCAD yapar, ve genişlik tutamağını çekerek çizim üzerinde küçük düzeltmeler
-yapabilirsiniz. `###` ile yapılamayan buydu.
+Dört mod var; hiçbirinde metin kırpılmaz ve hepsi `_OVERFLOW` katmanını kullanır, yani hangi
+hücrelerin taştığını her zaman katman seçimiyle görebilirsiniz. Her taşan hücre rapora bir
+`[TBL WARN] … mode=<mod>` satırı düşer.
 
-Kutular yine `_OVERFLOW` katmanında durur — hangi hücrelerin taştığını katman filtresiyle
-görmeye devam edersiniz, ve rapora her biri için bir `[TBL WARN] … mode=mtext` satırı düşer.
+| Mod | Davranış |
+|---|---|
+| `condense` (varsayılan) | Metin **hücreye sığacak şekilde yatay sıkıştırılır** — DXF genişlik çarpanı ayarlanır, yükseklik değişmez. Elle düzeltme gerekmez |
+| `mtext` | Tanımlı genişliği hücrenin metin alanına eşit bir `MTEXT`. Satır bölmeyi AutoCAD yapar; genişlik tutamağıyla elle düzeltebilirsiniz |
+| `marker` | Hücreyi dolduran `###` |
+| `full` | Metin olduğu gibi yazılır, hücre sınırını aşar |
 
-Diğer modlar: `--overflow marker` eski `###` davranışı, `--overflow full` metni olduğu gibi yazıp
-hücre sınırını aşmasına izin verir. Hiçbir modda metin kırpılmaz.
+**Neden `condense` varsayılan:** AutoCAD otomatik heceleme yapmaz. Uzun ve boşluksuz bir metin
+`mtext` modunda kutu genişliğini ne yaparsanız yapın kutudan taşmaya devam eder — bölünecek bir
+yer yoktur. `condense` metni yatayda daraltarak sığdırır ve çizim üzerinde elle düzeltme
+gerektirmez; tablo doğrudan basıma hazır çıkar.
+
+Metnin bölünebileceği yerler varsa `mtext` daha okunaklı bir sonuç verir — o hücrelerde
+`--overflow mtext` tercih edilebilir.
+
+Çarpan en geniş satırdan türetilir ve hücredeki **tüm satırlara aynısı** uygulanır; satır başına
+ayrı çarpan harf genişliklerini satırdan satıra zıplatırdı. Rapor çarpanı `width_factor=` alanında
+yazar.
+
+Okunabilirlik için bir taban vardır (`0.25`). Metin bundan fazla sıkıştırma gerektiriyorsa çarpan
+tabanda tutulur, hücre taşmaya devam eder ve rapora `clamped=yes` düşer — okunamayan bir tablo
+üretmektense taşmayı bildirmek doğru olan.
 
 Metin sayfadaki gibi çizilir: **"metni kaydır"** açık hücreler kelime sınırlarında satırlara
 bölünür, **döndürülmüş** hücreler (dar sütunlardaki dikey başlıklar) aynı açıyla döndürülür.
@@ -91,6 +108,15 @@ değil, satır yüksekliğine göre ölçülür. Bu iki hücre tipi `###` üretm
 DXF hem `--block` adlı blok tanımını hem de bu bloğun origin'e yerleştirilmiş tek bir `INSERT`'ünü
 içerir; böylece dosya doğrudan açıldığında tablo görünür. `$INSUNITS = 0` yazılır — hedef çizime
 eklerken otomatik ölçekleme devreye girmez.
+
+Tablonun dış sınırında tek tip bir **çerçeve** döner. Çerçeve ayrı bir dikdörtgen değildir: var
+olan dış ızgara parçalarının kalınlığı yükseltilir, dolayısıyla arkadaki zemin `HATCH`'inin
+sınırıyla **birebir çakışır** — ofset yok, çakışık çift çizgi yok. Tek tip olduğu için dört
+çizgiye birleşir (üst, alt, sol, sağ).
+
+Kalınlık `max(--frame, sınırda sayfanın koyduğu en kalın kenarlık)`: çerçeve bir taban getirir,
+sayfadaki bir vurguyu asla inceltmez. Rengi de sınırdaki en kalın kenarlığın rengidir, sayfada hiç
+kenarlık yoksa siyah. `--frame 0` ile kapatılır ve dış sınır tamamen sayfadan gelir.
 
 Bloğun en arkasında, seçimin tamamını kaplayan **opak beyaz bir zemin** vardır. Calc'ta "dolgu yok"
 olan hücre ekranda beyaz görünür, saydam değil; zemin olmadan o hücreler çizimde altlarındaki
@@ -116,7 +142,7 @@ düzeltirsiniz; araç sessizce kaymış bir tablo üretmez.
 ## Geliştirme
 
 ```bash
-.venv/Scripts/python.exe -m pytest          # 168 test
+.venv/Scripts/python.exe -m pytest          # 191 test
 .venv/Scripts/python.exe -m pytest tests/unit -q
 ```
 

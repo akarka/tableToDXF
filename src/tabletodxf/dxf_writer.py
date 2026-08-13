@@ -127,6 +127,11 @@ def write(
         _add_text(block, marker, layers["overflow"], text_style, use_true_color=False)
     for box in drawing.boxes:
         _add_mtext(block, box, layers["overflow"], text_style)
+    for item in drawing.condensed:
+        # Sıkıştırılmış metin gerçek içeriktir — kendi rengini taşır. Yine de
+        # `_OVERFLOW` katmanında durur ki hangi hücrelerin sıkıştırıldığı
+        # katman seçimiyle görülebilsin.
+        _add_text(block, item, layers["overflow"], text_style, use_true_color=True)
 
     doc.modelspace().add_blockref(block_name, (0, 0))
 
@@ -143,6 +148,7 @@ def write(
         texts=len(drawing.texts),
         markers=len(drawing.markers),
         mtexts=len(drawing.boxes),
+        condensed=len(drawing.condensed),
     )
 
 
@@ -193,6 +199,11 @@ def _add_text(
     attribs: dict[str, object] = {"layer": layer, "style": text_style}
     if use_true_color:
         attribs["true_color"] = _true_color(item.color)
+    if item.width_factor != 1.0:
+        # DXF `width`, TEXT'in yatay ölçek çarpanıdır (yükseklik değişmez).
+        # AutoCAD otomatik heceleme yapmadığı için, uzun bir kelimeyi hücreye
+        # sığdırmanın tek yolu bu.
+        attribs["width"] = item.width_factor
     entity = block.add_text(item.text, height=item.height, dxfattribs=attribs)
     entity.set_placement(item.insert, align=_ALIGN_MAP[item.h_align])
     if item.rotation_deg:

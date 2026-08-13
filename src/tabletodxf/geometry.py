@@ -15,13 +15,23 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from .metrics import FontMetrics, fits
-from .model import Border, Cell, HAlign, Rgb, SheetModel, VAlign
+from .model import BLACK, Border, Cell, HAlign, Rgb, SheetModel, VAlign
 from .report import Report
 
 Point = tuple[float, float]
 
-OverflowMode = Literal["mtext", "marker", "full"]
+OverflowMode = Literal["mtext", "condense", "marker", "full"]
 MARKER_CHAR = "#"
+
+# `condense` modunda genişlik çarpanının inebileceği taban. Altına inmek metni
+# okunmaz hâle getiriyor; taşmayı kabul edip uyarmak, okunamayan bir tablo
+# üretmekten iyidir.
+MIN_WIDTH_FACTOR = 0.25
+
+# Tablonun dış sınırına çekilen çerçevenin kalınlığı (mm). `0.0` = çerçeve yok.
+# Sayfadan gelmeyen tek çizgi budur; ADR-002'ye bilinçli bir istisnadır çünkü
+# tablonun nerede bittiği çizimin kendi bilgisi, sayfanın değil.
+DEFAULT_FRAME_MM = 0.35
 
 # Calc'ta "dolgu yok" olan hücre ekranda **beyaz** görünür, saydam değil.
 # Dolgusuz hücre için hiç varlık üretmezsek çizimde altındaki geometri görünür
@@ -61,6 +71,8 @@ class TextItem:
     v_align: VAlign
     color: Rgb
     rotation_deg: float = 0.0  # saat yönünün tersine
+    # DXF genişlik çarpanı (yatay ölçek). 1.0 = normal, <1.0 = sıkıştırılmış.
+    width_factor: float = 1.0
     is_marker: bool = False
 
 
@@ -95,6 +107,7 @@ class Drawing:
     texts: list[TextItem] = field(default_factory=list)
     markers: list[TextItem] = field(default_factory=list)
     boxes: list[TextBox] = field(default_factory=list)  # taşan hücreler, `MTEXT`
+    condensed: list[TextItem] = field(default_factory=list)  # yatay sıkıştırılmış
 
     @property
     def entity_count(self) -> int:
@@ -105,6 +118,7 @@ class Drawing:
             + len(self.texts)
             + len(self.markers)
             + len(self.boxes)
+            + len(self.condensed)
         )
 
 
@@ -114,7 +128,8 @@ def build(
     report: Report,
     *,
     scale_cm_to_units: float = 10.0,
-    overflow: OverflowMode = "mtext",
+    overflow: OverflowMode = "condense",
+    frame_mm: float = DEFAULT_FRAME_MM,
 ) -> Drawing:
     """Modeli çizilecek varlıklara çevirir. Üretim sırası F-001'deki sıradır."""
     units_per_mm = scale_cm_to_units / 10.0
@@ -125,7 +140,7 @@ def build(
     drawing = Drawing()
     drawing.background = _background(model, xs, ys)
     _emit_fills(model, xs, ys, drawing)
-    _emit_borders(model, xs, ys, drawing)
+    _emit_borders(model, xs, ys, drawing, frame_mm=frame_mm)
     _emit_texts(
         model,
         xs,
@@ -253,10 +268,64 @@ def _collect_edges(
     return horizontal, vertical
 
 
+def _frame_edge_keys(
+    model: SheetModel,
+) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """Dış sınırdaki ızgara parçalarının anahtarları — üst/alt ve sol/sağ."""
+    horizontal = [(0, col) for col in range(model.n_cols)]
+    horizontal += [(model.n_rows, col) for col in range(model.n_cols)]
+    vertical = [(0, row) for row in range(model.n_rows)]
+    vertical += [(model.n_cols, row) for row in range(model.n_rows)]
+    return horizontal, vertical
+
+
+def _apply_frame(
+    horizontal: dict[tuple[int, int], Border],
+    vertical: dict[tuple[int, int], Border],
+    model: SheetModel,
+    frame_mm: float,
+) -> None:
+    """Dış sınırı tek tip bir çerçeveye yükseltir.
+
+    Ayrı bir dikdörtgen eklemek yerine **var olan sınır parçalarının** kalınlığı
+    değiştiriliyor: ayrı dikdörtgen, hücrelerin kendi dış kenarlıklarıyla birebir
+    aynı yere düşüp çakışık çift çizgi üretirdi.
+
+    Kalınlık `max(frame_mm, sınırdaki en kalın mevcut kenarlık)` — çerçeve
+    sayfanın koyduğu bir vurguyu asla inceltmez, yalnızca bir taban getirir.
+    Tek tip olması, eş doğrultulu birleştirmenin çerçeveyi dört çizgiye
+    indirmesini de sağlar.
+    """
+    if frame_mm <= 0.0:
+        return
+
+    horizontal_keys, vertical_keys = _frame_edge_keys(model)
+    existing = [horizontal.get(key) for key in horizontal_keys]
+    existing += [vertical.get(key) for key in vertical_keys]
+    present = [border for border in existing if border is not None and border.visible]
+
+    heaviest = max(present, key=lambda border: border.width_mm, default=None)
+    frame = Border(
+        width_mm=max(frame_mm, heaviest.width_mm if heaviest else 0.0),
+        color=heaviest.color if heaviest else BLACK,
+    )
+
+    for key in horizontal_keys:
+        horizontal[key] = frame
+    for key in vertical_keys:
+        vertical[key] = frame
+
+
 def _emit_borders(
-    model: SheetModel, xs: list[float], ys: list[float], drawing: Drawing
+    model: SheetModel,
+    xs: list[float],
+    ys: list[float],
+    drawing: Drawing,
+    *,
+    frame_mm: float = DEFAULT_FRAME_MM,
 ) -> None:
     horizontal, vertical = _collect_edges(model)
+    _apply_frame(horizontal, vertical, model, frame_mm)
 
     for row, run_start, run_end, border in _merge_runs(horizontal):
         drawing.lines.append(
@@ -352,19 +421,42 @@ def _emit_texts(
         step_units = metrics.line_height_mm(size_pt) * units_per_mm
 
         use_box = overflowed and overflow == "mtext"
+        use_condense = overflowed and overflow == "condense"
         # Kaydırma açıkken işaret basılmaz: kaydırma zaten sığdırma yöntemidir,
         # `###` onu görünmez kılardı. Geriye tek bir kelimenin satıra sığmadığı
         # durum kalır; orada da metni yazmak `###`ten bilgilendiricidir.
         use_marker = overflowed and overflow == "marker" and not cell.wrap
 
+        # Tüm satırlara aynı çarpan uygulanır — en geniş satırdan türetilir.
+        # Satır başına ayrı çarpan her satırı hücreyi doldurmaya zorlar ve
+        # harf genişlikleri satırdan satıra zıplar.
+        width_factor = 1.0
+        if use_condense and widest_mm > 0:
+            width_factor = max(MIN_WIDTH_FACTOR, available_mm / widest_mm)
+
         if overflowed:
+            if use_box:
+                mode = "mtext"
+            elif use_condense:
+                mode = "condense"
+            elif use_marker:
+                mode = "marker"
+            else:
+                mode = "wrap" if cell.wrap else "full"
+            extra: dict[str, object] = {}
+            if use_condense:
+                extra["width_factor"] = round(width_factor, 3)
+                # Tabana dayandıysak metin hâlâ taşıyor; sessizce geçilmemeli.
+                if width_factor <= MIN_WIDTH_FACTOR:
+                    extra["clamped"] = "yes"
             report.warn(
                 "render_cell",
                 "text overflow",
                 cell=model.ref(cell.row, cell.col),
                 avail_mm=available_mm,
                 text_mm=widest_mm,
-                mode="mtext" if use_box else ("marker" if use_marker else ("wrap" if cell.wrap else "full")),
+                mode=mode,
+                **extra,
                 text=cell.text.replace("\n", " "),
             )
 
@@ -420,22 +512,26 @@ def _emit_texts(
             v_align=cell.v_align,
         )
 
-        target = drawing.markers if use_marker else drawing.texts
+        if use_marker:
+            target = drawing.markers
+        elif use_condense:
+            target = drawing.condensed
+        else:
+            target = drawing.texts
+
         for line, offset in zip(lines, offsets, strict=True):
             if not line:
                 continue
             target.append(
                 TextItem(
                     text=line,
-                    insert=(
-                        anchor * direction[0] + offset * up[0],
-                        anchor * direction[1] + offset * up[1],
-                    ),
+                    insert=_frame_point(anchor, offset, direction, up),
                     height=cap_units,
                     h_align=cell.h_align,
                     v_align=cell.v_align,
                     color=cell.font.color,
                     rotation_deg=cell.rotation_deg,
+                    width_factor=width_factor,
                     is_marker=use_marker,
                 )
             )

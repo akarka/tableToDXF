@@ -11,16 +11,25 @@
 # 1 cm kaç çizim birimi. Ofis standardı 1 birim = 1 mm ise 10.0 doğrudur.
 scale_cm_to_units = 10.0
 
+# Tablonun dış sınırındaki çerçeve kalınlığı (mm). 0 = çerçeve yok.
+# Ayrı bir dikdörtgen eklenmez; var olan dış ızgara parçaları yükseltilir, yani
+# çerçeve zeminin sınırıyla birebir çakışır. Sayfadaki daha kalın bir dış
+# kenarlık asla inceltilmez — bu değer yalnızca bir taban.
+frame_mm = 0.35
+
 # R2013 ve üstü. Daha eskisi TTF metin stilini taşıyamaz (Kiril/CJK bozulur).
 dxf_version = "R2013"
 
 # Hücreye sığmayan metin ne olsun:
-#   "mtext"  → tanımlı genişliği hücrenin metin alanına eşit MTEXT kutusu;
-#              AutoCAD'de genişlik tutamağıyla düzeltilebilir (varsayılan)
-#   "marker" → hücreyi dolduran ###
-#   "full"   → metnin tamamı yazılır, hücre sınırını taşar
-# Üç mod da _OVERFLOW katmanını kullanır; hiçbirinde kırpma yapılmaz.
-overflow = "mtext"
+#   "condense" → metin hücreye sığacak şekilde yatay sıkıştırılır (varsayılan).
+#                AutoCAD heceleme yapmadığı için, boşluksuz uzun metinlerde
+#                sığdırmanın tek yolu bu; elle düzeltme gerektirmez
+#   "mtext"    → tanımlı genişliği hücrenin metin alanına eşit MTEXT kutusu;
+#                AutoCAD'de genişlik tutamağıyla düzeltilebilir
+#   "marker"   → hücreyi dolduran ###
+#   "full"     → metnin tamamı yazılır, hücre sınırını taşar
+# Dördü de _OVERFLOW katmanını kullanır; hiçbirinde kırpma yapılmaz.
+overflow = "condense"
 
 [text]
 # Hedef çizimdeki aynı adlı bir stil bunu sessizce ezmesin diye tekil bir ad.

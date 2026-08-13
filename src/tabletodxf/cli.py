@@ -20,11 +20,12 @@ from .report import Report
 
 DEFAULT_CONFIG_NAME = "tabletodxf.toml"
 
-OVERFLOW_MODES = ("mtext", "marker", "full")
+OVERFLOW_MODES = ("condense", "mtext", "marker", "full")
 
 DEFAULTS = {
     "scale": 10.0,
-    "overflow": "mtext",
+    "overflow": "condense",
+    "frame": geometry.DEFAULT_FRAME_MM,
     "text_style": "ONCU_TBL_TEXT",
     "font": "NotoSans-Regular.ttf",
     "layer_prefix": "ONCU_TBL",
@@ -45,6 +46,7 @@ class Settings:
     block: str
     scale: float
     overflow: str
+    frame_mm: float
     text_style: str
     font: str
     layer_prefix: str
@@ -72,10 +74,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", default=None, help=f"config yolu (varsayılan ./{DEFAULT_CONFIG_NAME})")
     parser.add_argument("--scale", type=float, default=None, help="1 cm kaç çizim birimi")
     parser.add_argument(
+        "--frame",
+        type=float,
+        default=None,
+        help="tablonun dış sınırındaki çerçeve kalınlığı, mm (0 = çerçeve yok)",
+    )
+    parser.add_argument(
         "--overflow",
         choices=OVERFLOW_MODES,
         default=None,
-        help="taşan hücre: mtext (düzenlenebilir kutu) | marker (###) | full (taşmasına izin ver)",
+        help=(
+            "taşan hücre: condense (hücreye sığacak şekilde yatay sıkıştır, varsayılan) "
+            "| mtext (düzenlenebilir kutu) | marker (###) | full (taşmasına izin ver)"
+        ),
     )
     parser.add_argument("--text-style", dest="text_style", default=None)
     parser.add_argument("--font", default=None, help="ölçüm ve stil için TTF")
@@ -127,6 +138,15 @@ def merge(args: argparse.Namespace, config: dict) -> Settings:
             overflow=overflow,
         )
 
+    frame_mm = float(pick(args.frame, config.get("frame_mm"), "frame"))
+    if frame_mm < 0.0:
+        raise UsageError(
+            CONFIG_INVALID,
+            op="load_config",
+            reason="frame width cannot be negative — use 0 to disable the frame",
+            frame=frame_mm,
+        )
+
     dxf_version = validate_dxf_version(
         str(pick(args.dxf_version, config.get("dxf_version"), "dxf_version"))
     )
@@ -142,6 +162,7 @@ def merge(args: argparse.Namespace, config: dict) -> Settings:
         block=args.block,
         scale=float(pick(args.scale, config.get("scale_cm_to_units"), "scale")),
         overflow=overflow,
+        frame_mm=frame_mm,
         text_style=pick(args.text_style, text_section.get("style_name"), "text_style"),
         font=pick(args.font, text_section.get("font_file"), "font"),
         layer_prefix=pick(args.layer_prefix, layers_section.get("prefix"), "layer_prefix"),
@@ -237,6 +258,7 @@ def run(settings: Settings, report: Report) -> None:
         report,
         scale_cm_to_units=settings.scale,
         overflow=settings.overflow,  # type: ignore[arg-type]
+        frame_mm=settings.frame_mm,
     )
 
     dxf_writer.write(

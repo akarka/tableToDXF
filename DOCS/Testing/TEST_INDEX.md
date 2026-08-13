@@ -2,7 +2,7 @@
 
 Registry of all test suites. Update this when adding or removing test files.
 
-Toplam: **168 test**, tamamı geçiyor (2026-08-13).
+Toplam: **191 test**, tamamı geçiyor (2026-08-13).
 
 ---
 

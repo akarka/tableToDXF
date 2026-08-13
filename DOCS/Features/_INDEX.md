@@ -24,7 +24,7 @@ This is the single source of truth for all feature work. Agents must check this 
 |----|---------|--------|-------|-------------|
 | F-001 | `.ods` seçiminden DXF tablo bloğu üretimi | `REVIEW` | Claude Code | [F-001.md](F-001.md) |
 
-`REVIEW` gerekçesi: kod ve 168 otomatik test tamam; F-001'deki **Manual Verification** adımları
+`REVIEW` gerekçesi: kod ve 191 otomatik test tamam; F-001'deki **Manual Verification** adımları
 (AutoCAD'de görsel karşılaştırma, blok yeniden tanımlama, `ETRANSMIT`) insana bağlı ve bekliyor.
 
 ---

@@ -116,12 +116,30 @@ def test_invalid_overflow_in_config_is_rejected() -> None:
         merge(parse(), {"overflow": "kırp"})
 
 
-def test_overflow_defaults_to_mtext() -> None:
-    """Taşan hücre gizlenmez; AutoCAD'de genişliği ayarlanabilen bir kutu olur."""
-    assert merge(parse(), {}).overflow == "mtext"
+def test_frame_defaults_to_the_builtin_width() -> None:
+    from tabletodxf.geometry import DEFAULT_FRAME_MM
+
+    assert merge(parse(), {}).frame_mm == DEFAULT_FRAME_MM
 
 
-@pytest.mark.parametrize("mode", ["mtext", "marker", "full"])
+def test_frame_can_be_set_from_flag_and_config() -> None:
+    assert merge(parse(["--frame", "1.2"]), {}).frame_mm == 1.2
+    assert merge(parse(), {"frame_mm": 0.8}).frame_mm == 0.8
+    assert merge(parse(["--frame", "0"]), {"frame_mm": 0.8}).frame_mm == 0.0
+
+
+def test_negative_frame_is_rejected() -> None:
+    """`0` çerçeveyi kapatır; negatif değer bir yazım hatasıdır."""
+    with pytest.raises(UsageError):
+        merge(parse(["--frame", "-1"]), {})
+
+
+def test_overflow_defaults_to_condense() -> None:
+    """Taşan hücre kendiliğinden sığar; elle düzeltme gerektirmemeli."""
+    assert merge(parse(), {}).overflow == "condense"
+
+
+@pytest.mark.parametrize("mode", ["mtext", "condense", "marker", "full"])
 def test_every_overflow_mode_is_accepted(mode: str) -> None:
     assert merge(parse(["--overflow", mode]), {}).overflow == mode
 

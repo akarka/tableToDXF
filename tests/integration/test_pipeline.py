@@ -89,7 +89,7 @@ def test_entities_land_on_the_right_layers(generated) -> None:  # noqa: ANN001
     seen = Counter((e.dxftype(), e.dxf.layer) for e in doc.blocks.get(BLOCK))
 
     assert seen[("HATCH", "ONCU_TBL_FILL")] == 4  # beyaz zemin + üç başlık hücresi
-    assert seen[("MTEXT", "ONCU_TBL_OVERFLOW")] == 1  # tek taşan hücre
+    assert seen[("TEXT", "ONCU_TBL_OVERFLOW")] == 1  # tek taşan hücre, sıkıştırılmış
     assert seen[("LWPOLYLINE", "ONCU_TBL_GRID")] > 0
     assert seen[("TEXT", "ONCU_TBL_TEXT")] > 0
 
@@ -162,24 +162,65 @@ def test_fill_covers_the_header_cell_exactly(generated) -> None:  # noqa: ANN001
 
 
 def test_overflow_layer_isolates_the_overflowing_cells(generated) -> None:  # noqa: ANN001
-    """Katmanı dondurmak hâlâ temiz bir pafta verir; boş katman = taşma yok."""
+    """Taşan hücreler hangi modda olursa olsun bu katmanda toplanır."""
     _, doc = generated
     overflow = [e for e in doc.blocks.get(BLOCK) if e.dxf.layer == "ONCU_TBL_OVERFLOW"]
     assert len(overflow) == 1
-    assert overflow[0].dxftype() == "MTEXT"
+    assert overflow[0].dxftype() == "TEXT"  # varsayılan `condense`
 
 
-def test_overflowing_cell_becomes_an_editable_mtext(generated) -> None:  # noqa: ANN001
-    """Varsayılan mod: metin gizlenmez, kutu genişliği AutoCAD'de ayarlanabilir."""
-    _, doc = generated
+def test_mtext_mode_produces_an_editable_box(reference_ods: Path, tmp_path: Path) -> None:
+    """`--overflow mtext`: kutu genişliği AutoCAD'de tutamakla ayarlanabilir."""
+    out = tmp_path / "kutu.dxf"
+    assert run_cli(reference_ods, out, "--overflow", "mtext") == EXIT_OK
+
+    doc = ezdxf.readfile(str(out))
     mtexts = [e for e in doc.blocks.get(BLOCK) if e.dxftype() == "MTEXT"]
     assert len(mtexts) == 1
 
     mtext = mtexts[0]
     assert OVERFLOW_TEXT in mtext.text  # tam metin, kırpılmamış, `###` değil
+    assert mtext.dxf.layer == "ONCU_TBL_OVERFLOW"
     # C sütunu 50 mm, 1 cm = 10 birim, iki yandan 0.97 dolgu.
     assert mtext.dxf.width == pytest.approx(50.0 - 2 * 0.97)
     assert mtext.dxf.char_height > 0
+
+
+def test_condense_mode_squeezes_the_text_into_the_cell(
+    reference_ods: Path, tmp_path: Path
+) -> None:
+    """Taşan hücre tam metniyle, hücreye sığacak genişlik çarpanıyla çizilir."""
+    out = tmp_path / "sikistir.dxf"
+    assert run_cli(reference_ods, out, "--overflow", "condense") == EXIT_OK
+
+    doc = ezdxf.readfile(str(out))
+    block = doc.blocks.get(BLOCK)
+
+    assert not [e for e in block if e.dxftype() == "MTEXT"]
+    condensed = [
+        e
+        for e in block
+        if e.dxftype() == "TEXT" and e.dxf.layer == "ONCU_TBL_OVERFLOW"
+    ]
+    assert len(condensed) == 1
+    assert condensed[0].dxf.text == OVERFLOW_TEXT  # tam metin, `###` değil
+    assert 0.0 < condensed[0].dxf.width < 1.0  # DXF genişlik çarpanı
+
+
+def test_unaffected_cells_keep_a_neutral_width_factor(
+    reference_ods: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "sikistir2.dxf"
+    assert run_cli(reference_ods, out, "--overflow", "condense") == EXIT_OK
+
+    doc = ezdxf.readfile(str(out))
+    normal = [
+        e
+        for e in doc.blocks.get(BLOCK)
+        if e.dxftype() == "TEXT" and e.dxf.layer == "ONCU_TBL_TEXT"
+    ]
+    assert normal
+    assert all(e.dxf.width == 1.0 for e in normal)
 
 
 def test_marker_mode_still_available(reference_ods: Path, tmp_path: Path) -> None:
@@ -234,18 +275,105 @@ def test_geometry_extends_to_the_trailing_empty_row(generated) -> None:  # noqa:
     assert min(ys) == pytest.approx(-24.0)
 
 
-def test_header_bottom_border_is_heavier_than_the_grid(generated) -> None:  # noqa: ANN001
-    """Kalınlık varlık üzerinde (ByObject) taşınır — BYLAYER olamaz (ADR-002)."""
+def test_header_bottom_border_is_heavier_than_the_inner_grid(generated) -> None:  # noqa: ANN001
+    """Kalınlık varlık üzerinde (ByObject) taşınır — BYLAYER olamaz (ADR-002).
+
+    Karşılaştırma **iç** ızgaraya karşı: dış sınır çerçeveye yükseltildiği için
+    tablonun en kalın çizgileri artık çerçevenin kendisi.
+    """
     _, doc = generated
     lines = [e for e in doc.blocks.get(BLOCK) if e.dxftype() == "LWPOLYLINE"]
-    header_bottom = [
-        e for e in lines if all(point[1] == pytest.approx(-6.0) for point in e.get_points("xy"))
-    ]
+
+    def ys(entity) -> set[float]:  # noqa: ANN001
+        return {round(point[1], 3) for point in entity.get_points("xy")}
+
+    boundary_ys = {0.0, -24.0}
+    header_bottom = [e for e in lines if ys(e) == {-6.0}]
+    inner = [e for e in lines if not (ys(e) & boundary_ys) and e not in header_bottom]
+
     assert header_bottom
-    heaviest_elsewhere = max(
-        e.dxf.lineweight for e in lines if e not in header_bottom
+    assert inner
+    assert header_bottom[0].dxf.lineweight > max(e.dxf.lineweight for e in inner)
+
+
+def test_frame_traces_the_background_boundary_exactly(generated) -> None:  # noqa: ANN001
+    """Çerçeve, arkadaki zemin `HATCH`'inin sınırının ta kendisidir.
+
+    Ofset yok, ek dikdörtgen yok: çerçeve ayrı bir varlık olarak eklenmiyor,
+    var olan dış ızgara parçaları yükseltiliyor. Bu yüzden köşeleri zeminin
+    köşeleriyle birebir çakışır — testin sabit koordinat yazmak yerine zeminden
+    türetmesinin sebebi bu.
+    """
+    _, doc = generated
+    block = doc.blocks.get(BLOCK)
+
+    background = next(
+        e for e in block if e.dxftype() == "HATCH" and tuple(e.rgb) == (255, 255, 255)
     )
-    assert header_bottom[0].dxf.lineweight > heaviest_elsewhere
+    corners = [
+        (round(v[0], 3), round(v[1], 3)) for v in background.paths.paths[0].vertices
+    ]
+    left = min(x for x, _ in corners)
+    right = max(x for x, _ in corners)
+    bottom = min(y for _, y in corners)
+    top = max(y for _, y in corners)
+
+    expected = {
+        ((left, top), (right, top)),
+        ((left, bottom), (right, bottom)),
+        ((left, top), (left, bottom)),
+        ((right, top), (right, bottom)),
+    }
+
+    def points(entity) -> tuple:  # noqa: ANN001
+        return tuple((round(x, 3), round(y, 3)) for x, y in entity.get_points("xy"))
+
+    lines = [e for e in block if e.dxftype() == "LWPOLYLINE"]
+    drawn = {points(e) for e in lines}
+    assert expected <= drawn
+
+    weights = {e.dxf.lineweight for e in lines if points(e) in expected}
+    assert len(weights) == 1  # çerçeve tek tip
+
+
+def _top_edge_weight(path: Path) -> int:
+    doc = ezdxf.readfile(str(path))
+    tops = [
+        e
+        for e in doc.blocks.get(BLOCK)
+        if e.dxftype() == "LWPOLYLINE"
+        and all(round(point[1], 3) == 0.0 for point in e.get_points("xy"))
+    ]
+    assert tops
+    return max(e.dxf.lineweight for e in tops)
+
+
+def test_frame_can_be_switched_off(reference_ods: Path, tmp_path: Path) -> None:
+    """Kapalıyken dış sınır sayfanın kendi (ince) kenarlığında kalır.
+
+    Referans sayfanın dış kenarında zaten kenarlık var; çerçevenin işi onu
+    yaratmak değil, tek tip bir kalınlığa yükseltmek.
+    """
+    framed, plain = tmp_path / "cerceveli.dxf", tmp_path / "cercevesiz.dxf"
+    assert run_cli(reference_ods, framed) == EXIT_OK
+    assert run_cli(reference_ods, plain, "--frame", "0") == EXIT_OK
+
+    assert _top_edge_weight(framed) > _top_edge_weight(plain)
+
+
+def test_frame_width_is_configurable(reference_ods: Path, tmp_path: Path) -> None:
+    out = tmp_path / "kalincerceve.dxf"
+    assert run_cli(reference_ods, out, "--frame", "1.4") == EXIT_OK
+
+    doc = ezdxf.readfile(str(out))
+    top = [
+        e
+        for e in doc.blocks.get(BLOCK)
+        if e.dxftype() == "LWPOLYLINE"
+        and all(round(point[1], 3) == 0.0 for point in e.get_points("xy"))
+    ]
+    assert top
+    assert top[0].dxf.lineweight == 140  # 1.4 mm → 1/100 mm
 
 
 def test_text_style_is_ttf_backed(generated) -> None:  # noqa: ANN001

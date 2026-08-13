@@ -33,6 +33,14 @@ def make_model(rows: int, cols: int, cells: list[Cell]) -> SheetModel:
 
 
 def build(model: SheetModel, metrics: FontMetrics, report: Report, **kwargs):  # noqa: ANN201
+    """Testlerde dış çerçeve varsayılan olarak **kapalı**.
+
+    Kenarlık kuralları (paylaşılan kenar tekilleştirmesi, eş doğrultulu
+    birleştirme, birleşik alanın bastırılması) tek başına sınanabilsin diye:
+    çerçeve her çizime dört çizgi ekleyip bu testlerdeki her sayımı bozardı.
+    Çerçeveyi sınayan testler `frame_mm`'i açıkça geçiyor.
+    """
+    kwargs.setdefault("frame_mm", 0.0)
     return geometry.build(model, metrics, report, **kwargs)
 
 
@@ -219,6 +227,75 @@ def test_coloured_fills_are_separate_from_the_background(metrics, report) -> Non
     assert [fill.color for fill in drawing.fills] == [(255, 255, 0)]
 
 
+# ── Dış çerçeve ─────────────────────────────────────────────────────────────
+
+
+def test_frame_wraps_the_table_even_without_sheet_borders(metrics, report) -> None:  # noqa: ANN001
+    """Sayfada hiç kenarlık yoksa bile tablonun sınırı belli olmalı."""
+    drawing = build(make_model(2, 3, []), metrics, report, frame_mm=0.35)
+
+    assert len(drawing.lines) == 4  # üst, alt, sol, sağ
+    assert all(line.width_mm == pytest.approx(0.35) for line in drawing.lines)
+
+    horizontals = sorted(l.start[1] for l in drawing.lines if l.start[1] == l.end[1])
+    verticals = sorted(l.start[0] for l in drawing.lines if l.start[0] == l.end[0])
+    assert horizontals == pytest.approx([-10.0, 0.0])  # 2 satır × 5 mm
+    assert verticals == pytest.approx([0.0, 30.0])  # 3 sütun × 10 mm
+
+
+def test_frame_merges_into_four_lines_not_per_cell_segments(metrics, report) -> None:  # noqa: ANN001
+    """Tek tip kalınlık, eş doğrultulu birleştirmenin çerçeveyi toplamasını sağlar."""
+    drawing = build(make_model(5, 5, []), metrics, report, frame_mm=0.35)
+    assert len(drawing.lines) == 4
+
+
+def test_frame_never_thins_a_heavier_sheet_border(metrics, report) -> None:  # noqa: ANN001
+    """Sayfanın koyduğu vurgu çerçeve yüzünden kaybolmamalı."""
+    heavy = Border(1.2, (0, 0, 0))
+    model = make_model(
+        1, 1, [Cell(row=0, col=0, text="", borders=Borders(top=heavy))]
+    )
+    drawing = build(model, metrics, report, frame_mm=0.35)
+
+    assert all(line.width_mm == pytest.approx(1.2) for line in drawing.lines)
+
+
+def test_frame_takes_the_colour_of_the_heaviest_boundary_border(metrics, report) -> None:  # noqa: ANN001
+    model = make_model(
+        1, 1, [Cell(row=0, col=0, text="", borders=Borders(top=Border(1.2, (255, 0, 0))))]
+    )
+    drawing = build(model, metrics, report, frame_mm=0.35)
+    assert all(line.color == (255, 0, 0) for line in drawing.lines)
+
+
+def test_frame_does_not_touch_interior_grid_lines(metrics, report) -> None:  # noqa: ANN001
+    """Çerçeve yalnızca dış sınırı yükseltir; iç ızgara sayfadan geldiği gibi kalır."""
+    cells = [
+        Cell(row=r, col=c, text="", borders=Borders(left=THIN, top=THIN))
+        for r in range(2)
+        for c in range(2)
+    ]
+    drawing = build(make_model(2, 2, cells), metrics, report, frame_mm=0.9)
+
+    interior = [line for line in drawing.lines if line.width_mm == pytest.approx(THIN.width_mm)]
+    assert interior  # iç çizgiler inceliğini korudu
+    assert all(line.width_mm == pytest.approx(0.9) for line in drawing.lines if line not in interior)
+
+
+def test_frame_can_be_disabled(metrics, report) -> None:  # noqa: ANN001
+    assert build(make_model(2, 2, []), metrics, report, frame_mm=0.0).lines == []
+
+
+def test_frame_is_on_by_default(metrics, report) -> None:  # noqa: ANN001
+    """Yerel `build` yardımcısını atlayarak gerçek varsayılanı sınar."""
+    drawing = geometry.build(make_model(2, 2, []), metrics, report)
+    assert len(drawing.lines) == 4
+    assert all(
+        line.width_mm == pytest.approx(geometry.DEFAULT_FRAME_MM)
+        for line in drawing.lines
+    )
+
+
 # ── Dolgular ────────────────────────────────────────────────────────────────
 
 
@@ -382,14 +459,6 @@ def test_wrap_off_still_produces_markers(metrics, report) -> None:  # noqa: ANN0
 # ── Taşma: `mtext` modu (varsayılan) ────────────────────────────────────────
 
 
-def test_mtext_is_the_default_overflow_mode(metrics, report) -> None:  # noqa: ANN001
-    drawing = build(make_model(1, 1, [_text_cell(LONG)]), metrics, report)
-
-    assert drawing.markers == []
-    assert drawing.texts == []
-    assert len(drawing.boxes) == 1
-
-
 def test_mtext_carries_the_full_untruncated_text(metrics, report) -> None:  # noqa: ANN001
     drawing = build(make_model(1, 1, [_text_cell(LONG)]), metrics, report, overflow="mtext")
     assert drawing.boxes[0].text == LONG
@@ -443,6 +512,104 @@ def test_fitting_cells_never_become_mtext(metrics, report) -> None:  # noqa: ANN
     drawing = build(make_model(1, 1, [_text_cell("ok")]), metrics, report, overflow="mtext")
     assert drawing.boxes == []
     assert len(drawing.texts) == 1
+
+
+# ── Taşma: `condense` modu ──────────────────────────────────────────────────
+
+
+WIDE_CELL_MM = 40.0
+WIDE_AVAILABLE_MM = WIDE_CELL_MM - 2 * 0.97
+
+
+def make_wide_model(text: str, **cell_kw) -> SheetModel:
+    """Çarpanın tabana dayanmayacağı kadar geniş tek hücre.
+
+    Varsayılan 10 mm hücrede `LONG` ~7 kat taşıyor ve çarpan `MIN_WIDTH_FACTOR`'a
+    kırpılıyor; sıkıştırmanın **tam oturduğu** yolu sınamak için daha geniş bir
+    hücre gerekiyor.
+    """
+    model = SheetModel(
+        source_ref="S!A1:A1",
+        col_widths_mm=[WIDE_CELL_MM],
+        row_heights_mm=[5.0],
+        sheet_name="S",
+        row_refs=[0],
+        col_refs=[0],
+    )
+    model.cells[(0, 0)] = Cell(
+        row=0, col=0, text=text, font=FontSpec(size_pt=10.0), **cell_kw
+    )
+    return model
+
+
+def test_condense_is_the_default_overflow_mode(metrics, report) -> None:  # noqa: ANN001
+    """Varsayılan mod elle düzeltme gerektirmeden sığdırmalı."""
+    drawing = build(make_wide_model(LONG), metrics, report)
+
+    assert drawing.texts == []
+    assert drawing.markers == []
+    assert drawing.boxes == []
+    assert len(drawing.condensed) == 1
+
+
+def test_condense_shrinks_the_text_to_fit(metrics, report) -> None:  # noqa: ANN001
+    """AutoCAD heceleme yapmadığı için, sığdırmanın tek yolu yatay sıkıştırma."""
+    drawing = build(make_wide_model(LONG), metrics, report, overflow="condense")
+
+    assert drawing.texts == []
+    assert drawing.markers == []
+    assert drawing.boxes == []
+    assert len(drawing.condensed) == 1
+
+    item = drawing.condensed[0]
+    assert item.text == LONG  # kırpma yok
+    assert geometry.MIN_WIDTH_FACTOR < item.width_factor < 1.0
+
+
+def test_condensed_text_actually_fits_the_cell(metrics, report) -> None:  # noqa: ANN001
+    item = build(make_wide_model(LONG), metrics, report, overflow="condense").condensed[0]
+
+    drawn_mm = metrics.text_width_mm(item.text, 10.0) * item.width_factor
+    assert drawn_mm == pytest.approx(WIDE_AVAILABLE_MM)
+
+
+def test_condense_factor_is_clamped_at_the_readable_floor(metrics, report) -> None:  # noqa: ANN001
+    """Okunmaz bir çarpan üretmektense taşmayı kabul edip uyarmak."""
+    absurd = make_model(1, 1, [_text_cell("x" * 400)])
+    item = build(absurd, metrics, report, overflow="condense").condensed[0]
+
+    assert item.width_factor == geometry.MIN_WIDTH_FACTOR
+    assert any("clamped=yes" in line for line in report.lines)
+
+
+def test_condense_reports_the_factor(metrics, report) -> None:  # noqa: ANN001
+    build(make_model(1, 1, [_text_cell(LONG)]), metrics, report, overflow="condense")
+    assert report.warn_count == 1
+    assert any("mode=condense" in line for line in report.lines)
+    assert any("width_factor=" in line for line in report.lines)
+
+
+def test_all_lines_share_one_factor(metrics, report) -> None:  # noqa: ANN001
+    """Satır başına çarpan harf genişliklerini satırdan satıra zıplatırdı."""
+    model = make_model(1, 1, [_text_cell(f"kısa\n{LONG}")])
+    drawing = build(model, metrics, report, overflow="condense")
+
+    factors = {item.width_factor for item in drawing.condensed}
+    assert len(factors) == 1
+
+
+def test_fitting_cells_are_never_condensed(metrics, report) -> None:  # noqa: ANN001
+    drawing = build(make_model(1, 1, [_text_cell("ok")]), metrics, report, overflow="condense")
+    assert drawing.condensed == []
+    assert len(drawing.texts) == 1
+    assert drawing.texts[0].width_factor == 1.0
+
+
+def test_condense_keeps_rotation(metrics, report) -> None:  # noqa: ANN001
+    """Dikey başlık sıkıştırıldığında da dikey kalmalı."""
+    model = make_model(1, 1, [_text_cell(LONG, rotation_deg=90.0)])
+    item = build(model, metrics, report, overflow="condense").condensed[0]
+    assert item.rotation_deg == 90.0
 
 
 # ── Döndürülmüş metin ───────────────────────────────────────────────────────
