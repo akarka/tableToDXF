@@ -32,7 +32,9 @@ def _top_level_imports(path: Path) -> set[str]:
     return imported
 
 
-@pytest.mark.parametrize("filename", ["api.py", "config.py", "ods_reader.py", "cli.py"])
+@pytest.mark.parametrize(
+    "filename", ["api.py", "config.py", "ods_reader.py", "cli.py", "bookmarks.py"]
+)
 def test_core_module_does_not_import_tkinter(filename: str) -> None:
     imported = _top_level_imports(_SRC / filename)
     assert not imported & _FORBIDDEN, f"{filename} tkinter içe aktarıyor: {imported & _FORBIDDEN}"

@@ -2,7 +2,7 @@
 
 Registry of all test suites. Update this when adding or removing test files.
 
-Toplam: **360 test**, tamamı geçiyor (2026-08-13).
+Toplam: **414 test**, tamamı geçiyor (2026-08-13).
 
 ---
 
@@ -17,6 +17,8 @@ Toplam: **360 test**, tamamı geçiyor (2026-08-13).
 | Ayarlar | `tests/unit/test_config.py` | varsayılanların bugünkü davranışa eşitliği, TOML yükleme, tanınmayan anahtar/tip/aralık reddi, round-trip, `--set`, profil CRUD (kaydet/yükle/sil/yeniden adlandır) | ✅ |
 | CLI | `tests/unit/test_cli.py` | `--set` > bayrak > config > varsayılan önceliği, bayrak→ayar eşlemesi, DXF sürüm doğrulaması, `Job`/`Config` ayrımı, `--profile`, çıkış kodları | ✅ |
 | UI — formlar | `tests/unit/test_ui_forms.py` | tip→widget eşlemesi, metin↔değer round-trip (renk, nokta, liste, sayı), geçersiz girdi hataları — Tk kurmadan | ✅ |
+| UI — Girdi bölmesi | `tests/unit/test_ui_app.py` | blok adı önerisi (`dosya_sayfa`, yasak/boşluk karakteri temizliği), Windows "Yol olarak kopyala" tırnak temizliği — Tk kurmadan | ✅ |
+| Girdi kısayolları | `tests/unit/test_bookmarks.py` | `Job`↔`JobBookmark` round-trip, CRUD (kaydet/yükle/sil/yeniden adlandır), yasak ad, eksik/fazla/yanlış tipte alan, bozuk TOML, ters bölü/tırnak içeren yolların hayatta kalması | ✅ |
 | UI — akış | `tests/unit/test_ui_streaming.py` | `Report` satırlarının kuyruğa sırayla düşmesi, `print`'in fazladan `"\n"`'i, `drain()` sınırı — Tk kurmadan | ✅ |
 | UI — alan meta | `tests/unit/test_ui_fields.py` | bilinmeyen alan/bölüm çökmeden ham adına düşüyor; F-002 kataloğu ile `config.py`'nin gerçek alanları arasında kanarya testi | ✅ |
 | Çekirdek yalıtımı | `tests/unit/test_core_purity.py` | `api`/`config`/`ods_reader`/`cli` `tkinter` içe aktarmıyor; `tkinter` yalnızca `ui/` altında geçiyor | ✅ |

@@ -11,8 +11,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Sekme sırası da bu sözlüğün sırasıdır (F-001 üretim sırasına yakın: kaynak
-# okuma → yerleşim → metin → taşma → zemin → katmanlar → çıktı).
 SECTION_TITLES: dict[str, str] = {
     "source": "Kaynak",
     "layout": "Yerleşim",
@@ -22,6 +20,27 @@ SECTION_TITLES: dict[str, str] = {
     "layers": "Katmanlar",
     "output": "Çıktı",
 }
+
+# Sekme sırası **bilinçli olarak** `Config`'in dataclass alan sırasından
+# ayrıdır. O sıra (source, layout, text, overflow, background, layers,
+# output) TOML çıktısını ve F-002 kataloğunu belirliyor, orada sabit kalması
+# gerekiyor — burada değiştirmek TOML'u da karıştırırdı.
+#
+# UI sırası kullanıcının gerçekte en çok dokunduğu bölümlere göre (2026-08-14
+# kullanıcı kararı): `overflow`/`layers`/`layout` sık ayarlanır (tablo
+# başına farklı taşma davranışı, ofis katman standardı, çerçeve/ölçek);
+# `source` en seyrek dokunulanıdır — yalnızca `.ods`'in söylemediği
+# durumlarda devreye girer ve Calc bu bilgileri neredeyse her zaman zaten
+# taşır, o yüzden en sona alınır.
+TAB_ORDER: tuple[str, ...] = (
+    "overflow",
+    "layers",
+    "layout",
+    "background",
+    "output",
+    "text",
+    "source",
+)
 
 
 @dataclass(frozen=True)

@@ -12,13 +12,22 @@ import queue
 import sys
 import threading
 import tkinter as tk
-from dataclasses import fields, replace
+from dataclasses import replace
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import get_type_hints
 
 from .. import __version__
 from ..api import Job, convert, resolve_font
+from ..bookmarks import (
+    JobBookmark,
+    bookmarks_dir,
+    delete_bookmark,
+    list_bookmarks,
+    load_bookmark,
+    rename_bookmark,
+    save_bookmark,
+)
 from ..config import (
     DEFAULT_PROFILE_NAME,
     Config,
@@ -33,11 +42,48 @@ from ..config import (
 from ..errors import TableToDxfError, UsageError
 from ..ods_reader import list_sheets
 from ..report import Report, format_line
-from .fields import section_title
+from .fields import TAB_ORDER, section_title
 from .forms import SectionForm
 from .streaming import QueueWriter, RunFailed, RunOk, RunOutcome, drain
 
 _POLL_MS = 80
+
+# DXF sembol tablosu adlarında (blok/katman/stil) sorun çıkaran karakterler.
+_BLOCK_NAME_FORBIDDEN = frozenset('<>/\\":;?*|,=')
+
+
+def strip_wrapping_quotes(text: str) -> str:
+    """Windows Gezgini'nin "Yol olarak kopyala"sı yolu çift tırnak içine alır.
+
+    Kullanıcı bunu olduğu gibi yapıştırırsa `Path(...).suffix` `.ods` değil
+    `.ods"` döner ve uzantı denetimi haklı olarak reddeder — dosya sistemiyle
+    hiçbir ilgisi yoktur, salt metin sorunudur. `"` Windows'ta dosya adında
+    zaten yasak olduğu için, alanın başı ve sonunda eşleşen bir tırnak
+    görmek her zaman bu yapıştırma kalıntısıdır; güvenle temizlenir.
+    """
+    stripped = text.strip()
+    if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in ('"', "'"):
+        return stripped[1:-1].strip()
+    return stripped
+
+
+def suggest_block_name(source: str, sheet: str) -> str:
+    """`dosya_sayfa` biçiminde bir blok adı önerisi. Saf — Tk gerektirmez.
+
+    Boşluk ve DXF sembol adlarında yasak karakterler alt çizgiye çevrilir,
+    art arda gelen alt çizgiler tekilleştirilir. Kaynak ya da sayfa henüz
+    bilinmiyorsa elde ne varsa o döner (ikisi de boşsa boş dize).
+    """
+    stem = Path(source).stem.strip() if source.strip() else ""
+    sheet = sheet.strip()
+    combined = f"{stem}_{sheet}" if stem and sheet else stem or sheet
+
+    cleaned = "".join(
+        "_" if ch.isspace() or ch in _BLOCK_NAME_FORBIDDEN else ch for ch in combined
+    )
+    while "__" in cleaned:
+        cleaned = cleaned.replace("__", "_")
+    return cleaned.strip("_")
 
 
 class MainWindow:
@@ -50,6 +96,7 @@ class MainWindow:
         self._log_queue: queue.Queue[str] = queue.Queue()
         self._result_queue: queue.Queue[RunOutcome] = queue.Queue()
         self._current_out_path: Path | None = None
+        self._loaded_source: str | None = None
         self._section_hints = get_type_hints(Config)
         self._current_config = Config()
 
@@ -232,40 +279,188 @@ class MainWindow:
         outer.pack(fill="x", padx=10, pady=(0, 8))
         outer.columnconfigure(1, weight=1)
 
+        # Kayıtlı girdi kısayolu — Config profillerinden bağımsız (kullanıcı
+        # kararı, 2026-08-14): .ods/sayfa/aralık/blok/çıktı adlandırılıp
+        # kalıcı olarak saklanabilir, istenen ayar profiliyle serbestçe
+        # birleştirilir. Bkz. bookmarks.py.
+        bookmark_bar = ttk.Frame(outer)
+        bookmark_bar.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        bookmark_bar.columnconfigure(1, weight=1)
+        ttk.Label(bookmark_bar, text="Kayıtlı Girdi:").grid(row=0, column=0, sticky="w")
+        self._bookmark_var = tk.StringVar(master=bookmark_bar)
+        self._bookmark_combo = ttk.Combobox(
+            bookmark_bar, textvariable=self._bookmark_var, state="readonly"
+        )
+        self._bookmark_combo.grid(row=0, column=1, sticky="ew", padx=(6, 6))
+        self._bookmark_combo.bind("<<ComboboxSelected>>", self._on_bookmark_selected)
+        ttk.Button(bookmark_bar, text="Kaydet", command=self._save_bookmark).grid(
+            row=0, column=2, padx=2
+        )
+        ttk.Button(
+            bookmark_bar, text="Farklı Kaydet…", command=self._save_bookmark_as
+        ).grid(row=0, column=3, padx=2)
+        ttk.Button(
+            bookmark_bar, text="Yeniden Adlandır…", command=self._rename_bookmark
+        ).grid(row=0, column=4, padx=2)
+        ttk.Button(bookmark_bar, text="Sil…", command=self._delete_bookmark).grid(
+            row=0, column=5, padx=2
+        )
+        self._refresh_bookmark_list()
+
         self._source_var = tk.StringVar(master=outer)
         self._sheet_var = tk.StringVar(master=outer)
         self._range_var = tk.StringVar(master=outer)
         self._block_var = tk.StringVar(master=outer)
         self._out_var = tk.StringVar(master=outer)
+        # Blok adı kaynak+sayfa değiştikçe otomatik önerilir; kullanıcı alana
+        # kendi eliyle yazınca öneri takibi durur (aşağıdaki trace).
+        self._block_name_is_auto = True
+        self._suppress_block_trace = False
+        self._block_var.trace_add("write", self._on_block_var_written)
 
-        ttk.Label(outer, text=".ods dosyası:").grid(row=0, column=0, sticky="w", pady=3)
-        ttk.Entry(outer, textvariable=self._source_var).grid(
-            row=0, column=1, sticky="ew", padx=(6, 6)
-        )
-        ttk.Button(outer, text="Gözat…", command=self._browse_source).grid(row=0, column=2)
+        ttk.Label(outer, text=".ods dosyası:").grid(row=1, column=0, sticky="w", pady=3)
+        source_entry = ttk.Entry(outer, textvariable=self._source_var)
+        source_entry.grid(row=1, column=1, sticky="ew", padx=(6, 6))
+        # Yol Gözat dışında elle yazılıp/yapıştırılıp da girilebilir; sayfa
+        # kutusunun dolması o zaman da tetiklenmeli. Her tuş vuruşunda değil
+        # — alandan çıkılınca ya da Enter'a basılınca (mid-typing'te hata
+        # kutusu patlamasın diye).
+        source_entry.bind("<FocusOut>", self._on_source_entry_committed)
+        source_entry.bind("<Return>", self._on_source_entry_committed)
+        ttk.Button(outer, text="Gözat…", command=self._browse_source).grid(row=1, column=2)
 
-        ttk.Label(outer, text="Sayfa:").grid(row=1, column=0, sticky="w", pady=3)
+        ttk.Label(outer, text="Sayfa:").grid(row=2, column=0, sticky="w", pady=3)
         self._sheet_combo = ttk.Combobox(outer, textvariable=self._sheet_var)
-        self._sheet_combo.grid(row=1, column=1, sticky="ew", padx=(6, 6), columnspan=2)
+        self._sheet_combo.grid(row=2, column=1, sticky="ew", padx=(6, 6), columnspan=2)
+        # Sayfa değişimi (listeden seçim, elle yazıp Tab/Enter) blok adı
+        # önerisini tazeler.
+        self._sheet_combo.bind("<<ComboboxSelected>>", self._on_sheet_changed)
+        self._sheet_combo.bind("<FocusOut>", self._on_sheet_changed)
+        self._sheet_combo.bind("<Return>", self._on_sheet_changed)
 
-        ttk.Label(outer, text="Aralık:").grid(row=2, column=0, sticky="w", pady=3)
+        ttk.Label(outer, text="Aralık:").grid(row=3, column=0, sticky="w", pady=3)
         ttk.Entry(outer, textvariable=self._range_var).grid(
-            row=2, column=1, sticky="ew", padx=(6, 6)
+            row=3, column=1, sticky="ew", padx=(6, 6)
         )
-        ttk.Label(outer, text="ör. B3:C500", foreground="#888").grid(row=2, column=2, sticky="w")
+        ttk.Label(outer, text="ör. B3:C500", foreground="#888").grid(row=3, column=2, sticky="w")
 
-        ttk.Label(outer, text="Blok adı:").grid(row=3, column=0, sticky="w", pady=3)
+        ttk.Label(outer, text="Blok adı:").grid(row=4, column=0, sticky="w", pady=3)
         ttk.Entry(outer, textvariable=self._block_var).grid(
-            row=3, column=1, sticky="ew", padx=(6, 6), columnspan=2
+            row=4, column=1, sticky="ew", padx=(6, 6), columnspan=2
         )
 
-        ttk.Label(outer, text="Çıktı DXF:").grid(row=4, column=0, sticky="w", pady=3)
+        ttk.Label(outer, text="Çıktı DXF:").grid(row=5, column=0, sticky="w", pady=3)
         ttk.Entry(outer, textvariable=self._out_var).grid(
-            row=4, column=1, sticky="ew", padx=(6, 6)
+            row=5, column=1, sticky="ew", padx=(6, 6)
         )
         ttk.Button(outer, text="Farklı Kaydet…", command=self._browse_output).grid(
-            row=4, column=2
+            row=5, column=2
         )
+
+    # ── Kayıtlı girdi kısayolları ────────────────────────────────────────
+    # `Config` profillerinden bağımsız (kullanıcı kararı, 2026-08-14): bir
+    # kısayol yalnızca .ods/sayfa/aralık/blok/çıktı hatırlar, ayar taşımaz.
+    # Akış profil çubuğuyla bilinçli olarak birebir aynı (Kaydet / Farklı
+    # Kaydet / Yeniden Adlandır / Sil) — kullanıcı zaten o örüntüyü biliyor.
+
+    def _refresh_bookmark_list(self) -> None:
+        self._bookmark_combo["values"] = list_bookmarks()
+
+    def _on_bookmark_selected(self, _event: object = None) -> None:
+        name = self._bookmark_var.get()
+        if name:
+            self._load_bookmark(name)
+
+    def _load_bookmark(self, name: str) -> None:
+        try:
+            bookmark = load_bookmark(name)
+        except TableToDxfError as exc:
+            self._show_error("Kısayol yüklenemedi", exc)
+            return
+
+        self._bookmark_var.set(name)
+        self._source_var.set(bookmark.source)
+        self._loaded_source = None  # sayfa listesini zorla tazele
+        if bookmark.source.strip():
+            self._reload_sheets(bookmark.source)  # dosya artık yoksa hata gösterir, devam eder
+            self._loaded_source = bookmark.source
+        self._sheet_var.set(bookmark.sheet)  # kaydedilen sayfa, listede olmasa bile geçerli
+        self._range_var.set(bookmark.range_text)
+
+        self._suppress_block_trace = True
+        try:
+            self._block_var.set(bookmark.block)
+        finally:
+            self._suppress_block_trace = False
+        # Kaydedilmiş bir ad kullanıcı niyetidir; kaynak/sayfa sonradan
+        # değişse bile otomatik öneri bunun üzerine yazmamalı.
+        self._block_name_is_auto = False
+
+        self._out_var.set(bookmark.out)
+        self._set_status(f"'{name}' girdisi yüklendi.")
+
+    def _current_bookmark(self) -> JobBookmark:
+        return JobBookmark(
+            source=strip_wrapping_quotes(self._source_var.get()),
+            sheet=self._sheet_var.get(),
+            range_text=self._range_var.get(),
+            block=self._block_var.get(),
+            out=strip_wrapping_quotes(self._out_var.get()),
+        )
+
+    def _save_bookmark(self) -> None:
+        name = self._bookmark_var.get()
+        if not name:
+            self._save_bookmark_as()
+            return
+        self._save_bookmark_to(name)
+
+    def _save_bookmark_as(self) -> None:
+        name = simpledialog.askstring(
+            "Farklı Kaydet", "Yeni kısayol adı:", parent=self.root
+        )
+        if not name:
+            return
+        self._save_bookmark_to(name)
+
+    def _save_bookmark_to(self, name: str) -> None:
+        try:
+            save_bookmark(name, self._current_bookmark())
+        except TableToDxfError as exc:
+            self._show_error("Kısayol kaydedilemedi", exc)
+            return
+        self._refresh_bookmark_list()
+        self._bookmark_var.set(name)
+        self._set_status(f"'{name}' girdisi kaydedildi.")
+
+    def _rename_bookmark(self) -> None:
+        old_name = self._bookmark_var.get()
+        if not old_name:
+            return
+        new_name = simpledialog.askstring(
+            "Yeniden Adlandır", "Yeni ad:", initialvalue=old_name, parent=self.root
+        )
+        if not new_name or new_name == old_name:
+            return
+        try:
+            rename_bookmark(old_name, new_name)
+        except TableToDxfError as exc:
+            self._show_error("Yeniden adlandırılamadı", exc)
+            return
+        self._refresh_bookmark_list()
+        self._bookmark_var.set(new_name)
+
+    def _delete_bookmark(self) -> None:
+        name = self._bookmark_var.get()
+        if not name:
+            return
+        if not messagebox.askyesno(
+            "Kısayolu sil", f"'{name}' girdi kısayolu silinsin mi? Bu işlem geri alınamaz."
+        ):
+            return
+        delete_bookmark(name)
+        self._bookmark_var.set("")
+        self._refresh_bookmark_list()
 
     def _browse_source(self) -> None:
         path = filedialog.askopenfilename(
@@ -274,9 +469,57 @@ class MainWindow:
         if not path:
             return
         self._source_var.set(path)
-        self._reload_sheets(path)
+        self._use_source_path(path)
+
+    def _on_source_entry_committed(self, _event: object = None) -> None:
+        """Alana elle yazılan/yapıştırılan yolu Gözat ile aynı yola sokar.
+
+        Boş alan ve daha önce zaten yüklenmiş, değişmemiş bir yol için
+        atlanır — her odak kaybında aynı dosyayı gereksiz yere yeniden
+        açmamak, ve kullanıcının elle düzelttiği çıktı yolunu (aşağıda,
+        yalnızca boşsa dolduruluyor) tekrar tekrar denemekten kaçınmak için.
+        """
+        path = strip_wrapping_quotes(self._source_var.get())
+        if path != self._source_var.get():
+            self._source_var.set(path)  # kullanıcı da düzeltilmiş hâli görsün
+        if not path or path == self._loaded_source:
+            return
+        self._use_source_path(path)
+
+    def _use_source_path(self, path: str) -> None:
+        self._loaded_source = path
+        self._reload_sheets(path)  # başarılıysa sayfa kutusunu ilk sayfayla doldurur
         if not self._out_var.get():
             self._out_var.set(str(Path(path).with_suffix(".dxf")))
+        self._maybe_autofill_block_name()
+
+    def _on_sheet_changed(self, _event: object = None) -> None:
+        self._maybe_autofill_block_name()
+
+    def _on_block_var_written(self, *_args: object) -> None:
+        """Kullanıcı blok adını kendi eliyle değiştirince öneri takibi durur."""
+        if not self._suppress_block_trace:
+            self._block_name_is_auto = False
+
+    def _maybe_autofill_block_name(self) -> None:
+        """`dosya_sayfa` biçiminde bir blok adı önerir.
+
+        Yalnızca kullanıcı alanı kendi eliyle değiştirmediği sürece
+        (`_block_name_is_auto`) çalışır — kaynak ya da sayfa sonradan
+        değişirse öneri tazelenir, ama kullanıcının yazdığı özel bir ad asla
+        ezilmez.
+        """
+        if not self._block_name_is_auto:
+            return
+        suggestion = suggest_block_name(self._source_var.get(), self._sheet_var.get())
+        if not suggestion:
+            return
+        self._suppress_block_trace = True
+        try:
+            self._block_var.set(suggestion)
+        finally:
+            self._suppress_block_trace = False
+        self._block_name_is_auto = True  # trace bunu False yapmış olabilir
 
     def _reload_sheets(self, path: str) -> None:
         try:
@@ -301,36 +544,48 @@ class MainWindow:
             self._out_var.set(path)
 
     def _collect_job(self) -> Job:
+        # Yol alanları savunma amaçlı burada da temizlenir: kaynak alanı
+        # FocusOut'ta zaten temizleniyor, ama çıktı alanının böyle bir olayı
+        # yok (yalnızca Farklı Kaydet diyaloğu var) — biri oraya doğrudan
+        # tırnaklı bir yol yapıştırırsa `Job` yine de doğru yolu almalı.
+        source_text = strip_wrapping_quotes(self._source_var.get())
+        out_text = strip_wrapping_quotes(self._out_var.get())
+
         missing = [
             label
-            for label, var in (
-                (".ods dosyası", self._source_var),
-                ("Sayfa", self._sheet_var),
-                ("Aralık", self._range_var),
-                ("Blok adı", self._block_var),
-                ("Çıktı DXF", self._out_var),
+            for label, value in (
+                (".ods dosyası", source_text),
+                ("Sayfa", self._sheet_var.get()),
+                ("Aralık", self._range_var.get()),
+                ("Blok adı", self._block_var.get()),
+                ("Çıktı DXF", out_text),
             )
-            if not var.get().strip()
+            if not value.strip()
         ]
         if missing:
             raise ValueError(f"Eksik alan(lar): {', '.join(missing)}")
         return Job(
-            source=Path(self._source_var.get()),
+            source=Path(source_text),
             sheet=self._sheet_var.get(),
             range_text=self._range_var.get(),
-            out=Path(self._out_var.get()),
+            out=Path(out_text),
             block=self._block_var.get(),
         )
 
     # ── Ayar sekmeleri ───────────────────────────────────────────────────
 
     def _build_settings_notebook(self) -> None:
+        """Sekmeler `TAB_ORDER`'a göre kurulur — kullanıcının en sık dokunduğu
+
+        bölüm önde (`fields.py`'de gerekçesi var). `Config`'in kendi alan
+        sırasından **bilinçli olarak ayrı**: o sıra TOML/F-002 kataloğunu
+        belirliyor, burada değişmesi onları etkilemez.
+        """
         self._notebook = ttk.Notebook(self.root)
         self._notebook.pack(fill="both", expand=True, padx=10, pady=(0, 8))
 
         self._section_forms: dict[str, SectionForm] = {}
-        for section_field in fields(Config):
-            section_key = section_field.name
+        for section_key in TAB_ORDER:
             section_type = self._section_hints[section_key]
             form = SectionForm(self._notebook, section_key, section_type)
             self._notebook.add(form.frame, text=section_title(section_key))

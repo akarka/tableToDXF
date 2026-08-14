@@ -129,8 +129,14 @@ otomatik üretilir), **Çalıştır** düğmesi ve canlı akan bir rapor bölmes
 parçacığında çalışır; büyük bir tabloda bile pencere donmaz.
 
 Ayar formu `Config` şemasından üretilir: F-002'ye yeni bir ayar eklendiğinde UI otomatik büyür,
-ayrı bir "arayüzü de güncelle" adımı gerekmez. Ayrıntılar ve mimari kararlar:
-[`DOCS/Features/F-003.md`](DOCS/Features/F-003.md).
+ayrı bir "arayüzü de güncelle" adımı gerekmez.
+
+Girdi alanları (`.ods` yolu, sayfa, aralık, blok adı, çıktı yolu) da **Kayıtlı Girdi** ile
+adlandırılıp saklanabilir — profillerden tamamen bağımsız (`%LOCALAPPDATA%\OncuCAD\TableToDXF\inputs\`).
+İstenen kısayol istenen ayar profiliyle serbestçe birleştirilir; sık işlenen birkaç tabloyu
+(ör. "Blok A - Mahal", "Blok A - Çizim") tek tıkla geri çağırmak içindir.
+
+Ayrıntılar ve mimari kararlar: [`DOCS/Features/F-003.md`](DOCS/Features/F-003.md).
 
 **Paketleme** (Python kurulu olmayan bir Win10+ makinede çalıştırmak için) `PyInstaller` ile,
 insan tarafından yapılır — bkz. [ADR-004](DOCS/Architecture/ADR_004_ui_and_packaging.md).
@@ -250,7 +256,7 @@ düzeltirsiniz; araç sessizce kaymış bir tablo üretmez.
 ## Geliştirme
 
 ```bash
-.venv/Scripts/python.exe -m pytest          # 360 test
+.venv/Scripts/python.exe -m pytest          # 414 test
 .venv/Scripts/python.exe -m pytest tests/unit -q
 ```
 

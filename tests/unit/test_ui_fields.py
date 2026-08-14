@@ -8,7 +8,7 @@ from typing import get_type_hints
 import pytest
 
 from tabletodxf.config import Config
-from tabletodxf.ui.fields import SECTION_TITLES, _RAW, field_meta, section_title
+from tabletodxf.ui.fields import SECTION_TITLES, TAB_ORDER, _RAW, field_meta, section_title
 
 
 def test_unknown_field_falls_back_to_its_raw_name_not_a_crash() -> None:
@@ -48,6 +48,18 @@ def _all_config_fields() -> set[tuple[str, str]]:
 def test_every_section_has_a_ui_title() -> None:
     for section_field in dc_fields(Config):
         assert section_field.name in SECTION_TITLES, section_field.name
+
+
+def test_tab_order_contains_every_config_section_exactly_once() -> None:
+    """En sıkı kanarya: burada eksik bir bölüm o sekmeyi UI'dan tamamen
+
+    kaybeder — etiket eksikliği gibi zararsız bir kozmetik borç değil.
+    `Config`'e yeni bir bölüm eklenip `TAB_ORDER` güncellenmezse bu test
+    kırmızı olur.
+    """
+    real_sections = {f.name for f in dc_fields(Config)}
+    assert set(TAB_ORDER) == real_sections
+    assert len(TAB_ORDER) == len(real_sections)  # yinelenen yok
 
 
 def test_every_config_field_has_a_label_and_help_entry() -> None:
