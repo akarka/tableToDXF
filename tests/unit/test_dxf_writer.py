@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from tabletodxf.dxf_writer import escape_mtext, layer_names
+from tabletodxf.dxf_writer import _wants_true_color, escape_mtext, layer_names
 
 
 def test_layer_names_use_the_prefix() -> None:
@@ -39,3 +39,19 @@ def test_backslash_is_escaped_before_paragraph_breaks_are_added() -> None:
 
 def test_turkish_text_is_untouched() -> None:
     assert escape_mtext("Şişli ğüç İÇ") == "Şişli ğüç İÇ"
+
+
+# ── _wants_true_color (output.bylayer_defaults) ─────────────────────────────
+
+
+def test_bylayer_off_always_wants_true_color() -> None:
+    """Bayrak kapalıyken davranış F-001'deki gibi — hiçbir renk BYLAYER'a düşmez."""
+    assert _wants_true_color((0, 0, 0), bylayer_defaults=False)
+    assert _wants_true_color((255, 0, 0), bylayer_defaults=False)
+
+
+def test_bylayer_on_only_affects_pure_black() -> None:
+    assert not _wants_true_color((0, 0, 0), bylayer_defaults=True)
+    assert _wants_true_color((255, 0, 0), bylayer_defaults=True)
+    assert _wants_true_color((0, 0, 1), bylayer_defaults=True)  # neredeyse siyah, ama değil
+    assert _wants_true_color((255, 255, 255), bylayer_defaults=True)

@@ -43,6 +43,7 @@ FLAG_TO_SETTING: dict[str, str] = {
     "font": "text.font_file",
     "layer_prefix": "layers.prefix",
     "dxf_version": "output.dxf_version",
+    "bylayer_defaults": "output.bylayer_defaults",
 }
 
 
@@ -99,6 +100,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--font", default=None, help="ölçüm ve stil için TTF")
     parser.add_argument("--layer-prefix", dest="layer_prefix", default=None)
     parser.add_argument("--dxf-version", dest="dxf_version", default=None)
+    parser.add_argument(
+        "--bylayer-defaults",
+        dest="bylayer_defaults",
+        action="store_true",
+        default=None,
+        help=(
+            "tam siyah (0,0,0) kenarlık/metni katman rengine (BYLAYER) bırak — "
+            "CTB/kalem tablosu uyumu için. Renkli hiçbir şeye dokunmaz. "
+            "Kapatmak için --set output.bylayer_defaults=false"
+        ),
+    )
     parser.add_argument("--report", default=None, help="rapor dosyası yolu")
     parser.add_argument(
         "--set",

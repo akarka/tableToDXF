@@ -183,6 +183,17 @@ class OutputConfig:
     insert_block_reference: bool = True
     block_base_point: tuple[float, float] = (0.0, 0.0)
     write_report: bool = True
+    # ADR-002'ye bilinçli bir istisna (kullanıcı kararı, 2026-08-14): kenarlık
+    # ve metin rengi normalde varlık üzerinde (true_color) taşınır, çünkü
+    # hücre başına değişir. Ama en sık görülen durum — sıradan siyah kenarlık,
+    # otomatik/varsayılan siyah metin — hiçbir bilgi taşımaz; ofisin CTB/kalem
+    # tablosu ise ACI/BYLAYER'a göre çalışır ve true-color varlıkları çoğu
+    # zaman görmezden gelir. Açıkken, rengi **tam siyah (0,0,0)** olan
+    # varlıklar true_color almaz, katmanın kendi rengine (BYLAYER) düşer.
+    # Gerçek bir vurgu rengi (kırmızı kenarlık, renkli başlık metni) olan
+    # hiçbir şeye dokunulmaz. Kalınlık bu kararın dışında — polyline global
+    # width'i zaten gerçek geometri, katman `lineweight`'i burada anlamsız.
+    bylayer_defaults: bool = False
 
     def validate(self) -> None:
         _non_empty("output.dxf_version", self.dxf_version)

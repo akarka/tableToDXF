@@ -204,6 +204,24 @@ def test_every_mapped_setting_exists_on_config() -> None:
         assert hasattr(getattr(config, section), key), setting
 
 
+def test_bylayer_defaults_flag_defaults_to_off(tmp_path: Path) -> None:
+    assert build_config(parse(), cwd=tmp_path).output.bylayer_defaults is False
+
+
+def test_bylayer_defaults_flag_turns_it_on(tmp_path: Path) -> None:
+    config = build_config(parse(["--bylayer-defaults"]), cwd=tmp_path)
+    assert config.output.bylayer_defaults is True
+
+
+def test_bylayer_defaults_can_still_be_forced_off_via_set(tmp_path: Path) -> None:
+    """`--set` en açık niyet; adanmış bayrağı da ezebilmeli (F-002 AC-7)."""
+    config = build_config(
+        parse(["--bylayer-defaults", "--set", "output.bylayer_defaults=false"]),
+        cwd=tmp_path,
+    )
+    assert config.output.bylayer_defaults is False
+
+
 @pytest.mark.parametrize("mode", ["condense", "mtext", "marker", "full"])
 def test_every_overflow_mode_is_accepted(mode: str, tmp_path: Path) -> None:
     assert build_config(parse(["--overflow", mode]), cwd=tmp_path).overflow.mode == mode

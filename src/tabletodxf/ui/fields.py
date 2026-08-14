@@ -147,6 +147,11 @@ _RAW: dict[str, dict[str, tuple[str, str]]] = {
             "Rapor dosyası yazılsın",
             "Başarılı çalıştırmada .report.txt yazılsın mı",
         ),
+        "bylayer_defaults": (
+            "Tam siyahı katmana bırak (BYLAYER)",
+            "Yalnızca rengi tam siyah (0,0,0) olan kenarlık/metin katman rengine "
+            "düşer — CTB/kalem tablosu uyumu için. Renkli hiçbir şeye dokunmaz",
+        ),
     },
 }
 

@@ -2,7 +2,7 @@
 
 Registry of all test suites. Update this when adding or removing test files.
 
-Toplam: **414 test**, tamamı geçiyor (2026-08-13).
+Toplam: **425 test**, tamamı geçiyor (2026-08-13).
 
 ---
 
@@ -27,7 +27,7 @@ Toplam: **414 test**, tamamı geçiyor (2026-08-13).
 
 | Suite | File | Covers | Requires |
 |-------|------|--------|----------|
-| Uçtan uca hat | `tests/integration/test_pipeline.py` | referans `.ods` → DXF → `ezdxf` geri okuma (golden): blok adı, katman dağılımı, koordinatlar, metin içerikleri, `$INSUNITS`, Kiril/CJK, determinizm, hata yolunda dosya bırakmama | `NotoSans-Regular.ttf` |
+| Uçtan uca hat | `tests/integration/test_pipeline.py` | referans `.ods` → DXF → `ezdxf` geri okuma (golden): blok adı, katman dağılımı, koordinatlar, metin içerikleri, `$INSUNITS`, Kiril/CJK, determinizm, hata yolunda dosya bırakmama, `bylayer_defaults` (siyah→BYLAYER, renkli asla dokunulmaz, kalınlık etkilenmez) | `NotoSans-Regular.ttf` |
 
 Harici altyapı yok — DB, sunucu ya da ağ gerekmez. Font sistemde yoksa ölçüme dayanan testler
 `skip` olur (bkz. `tests/conftest.py::font_path`).

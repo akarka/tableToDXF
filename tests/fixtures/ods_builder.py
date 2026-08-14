@@ -38,6 +38,7 @@ class CellSpec:
     padding: str | None = None  # "0.1cm"
     wrap: bool = False  # "metni kaydır"
     rotation: int | None = None  # style:rotation-angle, derece
+    text_color: str | None = None  # "#ff0000" — fo:color
     col_span: int = 1
     row_span: int = 1
     covered: bool = False
@@ -79,6 +80,7 @@ class _StyleFactory:
             spec.padding,
             spec.wrap,
             spec.rotation,
+            spec.text_color,
         )
         if not any(key):
             return None
@@ -115,6 +117,8 @@ class _StyleFactory:
             text_attrs["fontweight"] = "bold"
         if spec.font_size:
             text_attrs["fontsize"] = spec.font_size
+        if spec.text_color:
+            text_attrs["color"] = spec.text_color
         if text_attrs:
             style.addElement(TextProperties(**text_attrs))
 

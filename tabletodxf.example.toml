@@ -92,3 +92,10 @@ dxf_version            = "R2013"   # R2013 ve üstü; eskisi TTF stili taşımaz
 insert_block_reference = true      # blok tanımının yanına model uzayına bir INSERT
 block_base_point       = [0.0, 0.0]
 write_report           = true      # başarılı çalıştırmada .report.txt
+# ADR-002'ye bilinçli istisna: kenarlık/metin rengi normalde varlık üzerinde
+# (true_color) taşınır çünkü hücre başına değişir. Açılırsa, rengi TAM SİYAH
+# (0,0,0) olan varlıklar (sıradan kenarlık, otomatik/varsayılan metin) katmana
+# (BYLAYER) bırakılır — ofisin CTB/kalem tablosu ACI/BYLAYER'a göre çalışıyorsa
+# işe yarar. Gerçek bir vurgu rengine (kırmızı kenarlık, renkli başlık) hiç
+# dokunulmaz. Kalınlığı etkilemez — o zaten polyline global width'i.
+bylayer_defaults       = false

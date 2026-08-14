@@ -52,6 +52,7 @@ PYTHONPATH=src python -m tabletodxf mahal.ods --sheet Mahal --range B2:E7 \
 | `--font` | `NotoSans-Regular.ttf` | ölçüm ve stil için TTF |
 | `--layer-prefix` | `ONCU_TBL` | katman ad alanı |
 | `--dxf-version` | `R2013` | R2013 ve üstü |
+| `--bylayer-defaults` | kapalı | tam siyah kenarlık/metni katman rengine (BYLAYER) bırak — aşağıya bakın |
 | `--report` | `<out>.report.txt` | rapor dosyası yolu |
 | `--verbose` | kapalı | `[TBL DEBUG]` satırlarını da bas |
 
@@ -240,6 +241,29 @@ geometriyi gösterirdi. Tablo bu yüzden üzerine bindiği her şeyi örter — 
 Her başarılı çalıştırma, DXF'in yanına aynı adlı bir `.report.txt` bırakır (UTF-8). Hata durumunda
 **hiçbir dosya yazılmaz** — ne DXF ne rapor.
 
+### Renk: ByObject mi, BYLAYER mi
+
+Kenarlık ve metin rengi varsayılan olarak **varlık üzerinde** (ByObject/true color) taşınır —
+sayfadan geldiği ve hücre başına değiştiği için tek bir katman rengiyle temsil edilemez
+(ADR-002). Bu, sayfada kırmızı bir kenarlık ya da renkli bir başlık varsa çizimde de aynen
+görünmesini sağlar.
+
+Ofisin çizim standardı CTB/kalem tablosu gibi **BYLAYER'a** göre çalışıyorsa (true-color
+varlıklar çoğu kalem tablosu tarafından görmezden gelinir) `--bylayer-defaults` açılabilir:
+yalnızca rengi **tam siyah (`#000000`)** olan kenarlık ve metin katman rengine (`BYLAYER`)
+bırakılır, katmanlar da zaten varsayılan olarak ACI `7`'dir (ekran arka planına göre siyah/beyaz).
+Gerçek bir vurgu rengine (kırmızı kenarlık, renkli başlık metni) **hiç dokunulmaz** — WYSIWYG
+bozulmaz, yalnızca "sıradan siyah" durumu katmana devredilir. Kalınlık bu bayraktan tamamen
+bağımsızdır; o zaten polyline'ın gerçek geometrisi (bkz. yukarısı), katman `lineweight`'i burada
+anlamsız kalırdı.
+
+```bash
+tabletodxf mahal.ods --sheet Mahal --range B2:E7 --out mahal.dxf --block T --bylayer-defaults
+```
+
+Kapatmak (varsayılan) için bayrağı vermeyin; `--set output.bylayer_defaults=false` ile bir
+profildeki `true` değerini de CLI'dan ezebilirsiniz.
+
 ---
 
 ## Kaynak dosya hazırlama
@@ -256,7 +280,7 @@ düzeltirsiniz; araç sessizce kaymış bir tablo üretmez.
 ## Geliştirme
 
 ```bash
-.venv/Scripts/python.exe -m pytest          # 414 test
+.venv/Scripts/python.exe -m pytest          # 425 test
 .venv/Scripts/python.exe -m pytest tests/unit -q
 ```
 

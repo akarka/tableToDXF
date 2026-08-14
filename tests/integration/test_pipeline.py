@@ -706,3 +706,153 @@ def test_scale_flag_changes_the_drawing_size(reference_ods: Path, tmp_path: Path
     _, grid = _frame_and_grid(doc)
     xs = [point[0] for e in grid for point in e.get_points("xy")]
     assert max(xs) == pytest.approx(210.0)  # 105 × 2
+
+
+# ── output.bylayer_defaults ──────────────────────────────────────────────
+
+
+def test_bylayer_defaults_off_keeps_every_colour_true_color(generated) -> None:  # noqa: ANN001
+    """Varsayılan (kapalı) davranış F-001'den beri değişmedi — regresyon kilidi.
+
+    `.dxf.color` (ACI) burada anlamsız: kodumuz onu hiçbir modda ayarlamıyor,
+    o yüzden her zaman 256'da kalır. Gerçek ayırt edici sinyal `true_color`
+    grup kodunun (420) varlığı.
+    """
+    _, doc = generated
+    block = doc.blocks.get(BLOCK)
+    coloured = [e for e in block if e.dxftype() in ("LWPOLYLINE", "TEXT", "MTEXT")]
+    assert coloured
+    assert all(e.dxf.hasattr("true_color") for e in coloured)
+
+
+_MIXED_COLOUR_EXTRA = ["--set", "layout.frame_mm=0"]  # aşağıya bakın
+
+
+@pytest.fixture
+def mixed_colour_sheet(tmp_path: Path) -> Path:
+    """Bir varsayılan (siyah) hücre + bir kırmızı kenarlıklı/metinli hücre.
+
+    `bylayer_defaults`'ın yalnızca tam siyahı etkileyip gerçek bir vurgu
+    rengine dokunmadığını göstermek için minimum senaryo. Çerçeve **kapalı**
+    tutulmalı (`_MIXED_COLOUR_EXTRA`): açık olsaydı, seçimin dış sınırındaki
+    kırmızı kenarlıklar `_extract_frame` tarafından toplanıp tek bir çerçeve
+    varlığına dönüştürülür, bu testin ayırt etmek istediği "hangi çizgi hangi
+    hücreden geldi" bilgisini bulanıklaştırırdı.
+    """
+    return build_ods(
+        tmp_path / "renkli.ods",
+        [
+            SheetSpec(
+                name="S",
+                col_widths=["3cm", "3cm"],
+                rows=[
+                    RowSpec(
+                        cells=[
+                            CellSpec(text="siyah", border="0.5pt solid #000000"),
+                            CellSpec(
+                                text="kirmizi",
+                                border="0.5pt solid #ff0000",
+                                text_color="#ff0000",
+                            ),
+                        ]
+                    )
+                ],
+            )
+        ],
+    )
+
+
+def _run_mixed(source: Path, out: Path, *extra: str) -> int:
+    return main(
+        [
+            str(source),
+            "--sheet",
+            "S",
+            "--range",
+            "A1:B1",
+            "--out",
+            str(out),
+            "--block",
+            "T",
+            *_MIXED_COLOUR_EXTRA,
+            *extra,
+        ]
+    )
+
+
+def test_bylayer_defaults_sends_black_entities_to_the_layer(
+    mixed_colour_sheet: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "bylayer.dxf"
+    assert _run_mixed(mixed_colour_sheet, out, "--set", "output.bylayer_defaults=true") == EXIT_OK
+
+    doc = ezdxf.readfile(str(out))
+    block = doc.blocks.get("T")
+
+    lines = [e for e in block if e.dxftype() == "LWPOLYLINE"]
+    black_lines = [e for e in lines if e.dxf.const_width == pytest.approx(0.5 * 25.4 / 72) and not e.dxf.hasattr("true_color")]
+    assert black_lines  # siyah kenarlık(lar) true_color'sız — BYLAYER
+
+    texts = {e.dxf.text: e for e in block if e.dxftype() == "TEXT"}
+    assert not texts["siyah"].dxf.hasattr("true_color")
+
+
+def test_bylayer_defaults_never_touches_a_real_accent_colour(
+    mixed_colour_sheet: Path, tmp_path: Path
+) -> None:
+    """Asıl garanti: kırmızı hiçbir zaman katmana bırakılmaz."""
+    out = tmp_path / "bylayer_kirmizi.dxf"
+    assert _run_mixed(mixed_colour_sheet, out, "--set", "output.bylayer_defaults=true") == EXIT_OK
+
+    doc = ezdxf.readfile(str(out))
+    block = doc.blocks.get("T")
+
+    red_text = next(e for e in block if e.dxftype() == "TEXT" and e.dxf.text == "kirmizi")
+    assert red_text.dxf.hasattr("true_color")
+    assert tuple(red_text.rgb) == (255, 0, 0)
+
+    red_lines = [
+        e
+        for e in block
+        if e.dxftype() == "LWPOLYLINE"
+        and e.dxf.hasattr("true_color")
+        and tuple(e.rgb) == (255, 0, 0)
+    ]
+    assert red_lines  # kırmızı kenarlık en az bir çizgide true_color olarak duruyor
+
+
+def test_bylayer_defaults_does_not_change_line_widths(
+    mixed_colour_sheet: Path, tmp_path: Path
+) -> None:
+    """Kalınlık bu bayraktan tamamen bağımsız — hâlâ gerçek geometri."""
+    without, with_flag = tmp_path / "n.dxf", tmp_path / "b.dxf"
+    assert _run_mixed(mixed_colour_sheet, without) == EXIT_OK
+    assert _run_mixed(mixed_colour_sheet, with_flag, "--set", "output.bylayer_defaults=true") == EXIT_OK
+
+    def widths(path: Path) -> list[float]:
+        doc = ezdxf.readfile(str(path))
+        return sorted(
+            round(e.dxf.const_width, 6)
+            for e in doc.blocks.get("T")
+            if e.dxftype() == "LWPOLYLINE"
+        )
+
+    assert widths(without) == widths(with_flag)
+
+
+def test_mtext_overflow_color_also_respects_bylayer_defaults(
+    reference_ods: Path, tmp_path: Path
+) -> None:
+    """Dördüncü çağrı noktası (`_add_mtext`) de aynı kurala tabi."""
+    out = tmp_path / "mtext_bylayer.dxf"
+    assert (
+        run_cli(
+            reference_ods, out, "--overflow", "mtext", "--set", "output.bylayer_defaults=true"
+        )
+        == EXIT_OK
+    )
+
+    doc = ezdxf.readfile(str(out))
+    mtext = next(e for e in doc.blocks.get(BLOCK) if e.dxftype() == "MTEXT")
+    # Referans sayfadaki taşan hücrenin metin rengi varsayılan (siyah).
+    assert not mtext.dxf.hasattr("true_color")

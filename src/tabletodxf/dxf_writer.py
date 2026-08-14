@@ -21,7 +21,7 @@ from ezdxf.lldxf import const
 
 from .config import LayerConfig, OutputConfig, TextConfig
 from .geometry import BorderLine, Drawing, FillShape, FrameBox, TextBox, TextItem
-from .model import HAlign, Rgb, VAlign
+from .model import BLACK, HAlign, Rgb, VAlign
 from .report import Report
 
 _ALIGN_MAP: dict[HAlign, TextEntityAlignment] = {
@@ -109,21 +109,49 @@ def write(
         _add_fill(block, drawing.background, layers["fill"])
     for fill in drawing.fills:
         _add_fill(block, fill, layers["fill"])
+    bylayer = output_config.bylayer_defaults
     for line in drawing.lines:
-        _add_line(block, line, layers["grid"])
+        _add_line(block, line, layers["grid"], use_true_color=_wants_true_color(line.color, bylayer))
     if drawing.frame is not None:
-        _add_frame(block, drawing.frame, layers["grid"])
+        _add_frame(
+            block,
+            drawing.frame,
+            layers["grid"],
+            use_true_color=_wants_true_color(drawing.frame.color, bylayer),
+        )
     for text in drawing.texts:
-        _add_text(block, text, layers["text"], text_style, use_true_color=True)
+        _add_text(
+            block,
+            text,
+            layers["text"],
+            text_style,
+            use_true_color=_wants_true_color(text.color, bylayer),
+        )
     for marker in drawing.markers:
+        # Markerlar sentetiktir — hücrenin font rengini hiç taşımaz, her
+        # zaman `_OVERFLOW` katmanının kendi (kırmızı) rengine düşer. Bu,
+        # `bylayer_defaults`'tan bağımsız, F-001'den beri değişmeyen bir
+        # tasarım kararı.
         _add_text(block, marker, layers["overflow"], text_style, use_true_color=False)
     for box in drawing.boxes:
-        _add_mtext(block, box, layers["overflow"], text_style)
+        _add_mtext(
+            block,
+            box,
+            layers["overflow"],
+            text_style,
+            use_true_color=_wants_true_color(box.color, bylayer),
+        )
     for item in drawing.condensed:
         # Sıkıştırılmış metin gerçek içeriktir — kendi rengini taşır. Yine de
         # `_OVERFLOW` katmanında durur ki hangi hücrelerin sıkıştırıldığı
         # katman seçimiyle görülebilsin.
-        _add_text(block, item, layers["overflow"], text_style, use_true_color=True)
+        _add_text(
+            block,
+            item,
+            layers["overflow"],
+            text_style,
+            use_true_color=_wants_true_color(item.color, bylayer),
+        )
 
     if output_config.insert_block_reference:
         doc.modelspace().add_blockref(block_name, output_config.block_base_point)
@@ -149,6 +177,15 @@ def _true_color(color: Rgb) -> int:
     return ezdxf.rgb2int(color)
 
 
+def _wants_true_color(color: Rgb, bylayer_defaults: bool) -> bool:
+    """`output.bylayer_defaults` açıkken tam siyah varlıklar katmana bırakılır.
+
+    Bkz. `OutputConfig.bylayer_defaults` — yalnızca `(0, 0, 0)` etkilenir;
+    başka hiçbir renk bu bayraktan etkilenmez.
+    """
+    return not (bylayer_defaults and color == BLACK)
+
+
 def _add_fill(block, fill: FillShape, layer: str) -> None:  # noqa: ANN001
     """Arka plan dolgusu — düz desenli `HATCH`.
 
@@ -167,26 +204,22 @@ def _add_fill(block, fill: FillShape, layer: str) -> None:  # noqa: ANN001
     hatch.paths.add_polyline_path(fill.corners, is_closed=True)
 
 
-def _add_line(block, line: BorderLine, layer: str) -> None:  # noqa: ANN001
+def _add_line(block, line: BorderLine, layer: str, *, use_true_color: bool) -> None:  # noqa: ANN001
     """Kalınlık polyline'ın **global genişliğiyle** taşınır, `lineweight` ile değil.
 
     `lineweight` bir görüntüleme/çizdirme niteliğidir: `LWDISPLAY` kapalıysa
     ekranda görünmez ve baskıda CTB/STB kalem tablosu onu ezebilir. Global
     genişlik ise gerçek geometridir — her zoom'da görünür, her kalem tablosunda
     aynı basar. Sayfadaki kalınlık hiyerarşisi (başlık altı kalın, ızgara ince)
-    böylece çizimde birebir korunur (ADR-002).
+    böylece çizimde birebir korunur (ADR-002). Bu, `bylayer_defaults`'tan
+    bağımsız — kalınlık asla katmana bırakılmaz, yalnızca renk.
 
     `lineweight` bilinçli olarak hiç yazılmıyor; BYLAYER varsayılanında kalıyor.
     """
-    block.add_lwpolyline(
-        [line.start, line.end],
-        format="xy",
-        dxfattribs={
-            "layer": layer,
-            "true_color": _true_color(line.color),
-            "const_width": line.width,
-        },
-    )
+    attribs: dict[str, object] = {"layer": layer, "const_width": line.width}
+    if use_true_color:
+        attribs["true_color"] = _true_color(line.color)
+    block.add_lwpolyline([line.start, line.end], format="xy", dxfattribs=attribs)
 
 
 def _add_text(
@@ -215,25 +248,26 @@ def _add_text(
         entity.dxf.rotation = item.rotation_deg
 
 
-def _add_frame(block, frame: FrameBox, layer: str) -> None:  # noqa: ANN001
+def _add_frame(block, frame: FrameBox, layer: str, *, use_true_color: bool) -> None:  # noqa: ANN001
     """Dış çerçeve — tek **kapalı** `LWPOLYLINE`.
 
     Kapalı olması köşelerin gönyeli birleşmesini sağlar; dört ayrı çizgide
     genişlik eksen çizgisinden açıldığı için köşelerde çentik kalırdı.
     """
-    block.add_lwpolyline(
-        frame.corners,
-        format="xy",
-        close=True,
-        dxfattribs={
-            "layer": layer,
-            "true_color": _true_color(frame.color),
-            "const_width": frame.width,
-        },
-    )
+    attribs: dict[str, object] = {"layer": layer, "const_width": frame.width}
+    if use_true_color:
+        attribs["true_color"] = _true_color(frame.color)
+    block.add_lwpolyline(frame.corners, format="xy", close=True, dxfattribs=attribs)
 
 
-def _add_mtext(block, box: TextBox, layer: str, text_style: str) -> None:  # noqa: ANN001
+def _add_mtext(
+    block,  # noqa: ANN001
+    box: TextBox,
+    layer: str,
+    text_style: str,
+    *,
+    use_true_color: bool,
+) -> None:
     """Taşan hücre — `MTEXT`, tanımlı genişliği hücrenin metin alanı kadar.
 
     `width` hücre genişliğinden dolgu payı düşülerek verilir; yani sayfadaki
@@ -245,8 +279,9 @@ def _add_mtext(block, box: TextBox, layer: str, text_style: str) -> None:  # noq
         "style": text_style,
         "char_height": box.height,
         "width": box.width,
-        "true_color": _true_color(box.color),
     }
+    if use_true_color:
+        attribs["true_color"] = _true_color(box.color)
     mtext = block.add_mtext(escape_mtext(box.text), dxfattribs=attribs)
     mtext.set_location(
         box.insert,
