@@ -1,69 +1,76 @@
 # Test Fixtures
 
-Test data, factories, and seed scripts for tests.
+Bu projede fixture demek, **kaynak `.ods` sayfası** demek. Veritabanı yok, seed yok, factory yok.
 
 ---
 
-## Structure
+## Yapı
 
 ```
 fixtures/
-  factories.ts      — Object factories (build in-memory test data)
-  seed.ts           — Database seed for integration/e2e tests
-  data/             — Static JSON/CSV test data (for file-processing tests)
+  ods_builder.py    — spec nesnelerinden gerçek bir .ods dosyası üretir
+  __init__.py
 ```
+
+Referans `.ods` depoya **ikili dosya olarak girmez**; kod olarak üretilir. Sebebi: golden testin
+neyi doğruladığı diff'te görünür ve sayfayı değiştirmek için LibreOffice açmak gerekmez.
 
 ---
 
-## Using Factories
+## Kullanım
 
-```typescript
-import { makeUser, makeItem } from '../fixtures/factories';
+```python
+from fixtures.ods_builder import build_ods, SheetSpec, RowSpec, CellSpec
 
-const user = makeUser({ role: 'admin' });
-const item = makeItem({ ownerId: user.id, name: 'My Item' });
+path = build_ods(tmp_path / "mahal.ods", [
+    SheetSpec(
+        name="Mahal",
+        col_widths=["3.0cm", "2.0cm"],
+        rows=[
+            RowSpec(cells=[
+                CellSpec(text="Mahal", bold=True, fill="#dddddd",
+                         border="0.06pt solid #000000"),
+                CellSpec(text="Alan", bold=True, border="0.06pt solid #000000"),
+            ]),
+            RowSpec(cells=[
+                CellSpec(text="Zemin kat koridoru"),
+                CellSpec(value=24.5, text="24,50"),
+            ]),
+        ],
+    ),
+])
 ```
+
+`CellSpec` sayfanın söyleyebildiği her şeyi taşır: `bold`, `align`, `valign`, `fill`, `border`,
+`border_bottom`, `font_size`, `padding`, `wrap`, `rotation`, `text_color`, `col_span`, `row_span`,
+`covered`, `omit_cached_value`. `RowSpec` `height` ve `hidden`, `SheetSpec` `col_widths` ve
+`hidden_cols` taşır.
+
+`value` ile `text` **ayrı** verilir: `value` hücrenin `office:value-type`'ını belirler (hizalama
+kararı buradan gelir), `text` ise sayfada **görünen** biçimlenmiş metindir (ADR-002, AC-3).
 
 ---
 
-## Writing a Factory
+## Ortak fixture'lar
 
-Every domain entity should have a factory. Rules:
+`tests/conftest.py` içinde:
 
-- Always provide safe defaults for all required fields
-- Accept `Partial<T>` overrides
-- Use fixed (not random) defaults — `id: 'test-user-id'`, not `uuid()`
-- If the test needs a unique value, pass it explicitly
+| Fixture | Kapsam | Ne verir |
+|---|---|---|
+| `reference_spec()` | fonksiyon değil, düz çağrı | Golden testin referans sayfası — `Mahal`, seçim `B2:E7` |
+| `reference_ods` | session | `reference_spec()`'ten üretilmiş gerçek bir `.ods` yolu |
+| `font_path` | session | Ölçüm fontu; sistemde yoksa test `skip` olur, hata vermez |
+| `metrics` | session | `font_path`'ten yüklenmiş `FontMetrics` |
+| `report` | function | Boş bir `Report` (çıktıyı yutar) |
 
-```typescript
-// factories.ts
-export function makeUser(overrides: Partial<UserEntity> = {}): UserEntity {
-  return {
-    id: 'test-user-id',
-    name: 'Test User',
-    email: 'test@example.com',
-    role: 'user',
-    createdAt: new Date('2025-01-01T00:00:00Z'),
-    updatedAt: new Date('2025-01-01T00:00:00Z'),
-    ...overrides,
-  };
-}
-```
+Referans sayfa bilinçli olarak zor: başlık satırı (dolgu + kalın alt kenarlık), dikey birleştirme
+`B3:B4`, yatay birleştirme `C4:D4`, gizli `D` sütunu, gizli 5. satır, taşan bir hücre ve sonda
+kenarlıklı boş bir satır.
 
 ---
 
-## Database Seed (Integration Tests)
+## Kural
 
-The seed script populates the test database with a known state:
-
-```typescript
-// seed.ts
-export async function seedTestDatabase(db: Database): Promise<void> {
-  await db.table('users').insert([
-    makeUser({ id: 'seed-user-1', email: 'alice@example.com' }),
-    makeUser({ id: 'seed-user-2', email: 'bob@example.com', role: 'admin' }),
-  ]);
-}
-```
-
-**Rule:** Integration tests that need data should call the seed function in `beforeEach` and roll back in `afterEach`. Do not assume data left over from a previous test.
+Yeni bir fixture yazarken **sabit** değer kullan — rastgele veri, tarih ya da `uuid` yok. AC-12
+aynı girdinin baytı baytına aynı çıktıyı üretmesini şart koşuyor; testin kendisi de deterministik
+olmalı. Teste özel bir değer gerekiyorsa onu açıkça geç.

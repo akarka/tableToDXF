@@ -131,7 +131,8 @@ Standard playbooks for common development tasks. Each pattern defines who does w
 ### What to Update
 
 - `DOCS/Features/[F-N].md` — ensure technical design section matches implementation
-- `DOCS/Architecture/System_Overview.md` — if components changed
+- `CLAUDE.md` — if the pipeline, mandates, or directory layout changed
+- `README.md` — if user-facing behaviour changed
 - `CLAUDE.md` — if build command, stack, or directory structure changed
 - `DOCS/Runbooks/` — if operational procedures changed
 

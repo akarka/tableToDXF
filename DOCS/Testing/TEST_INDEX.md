@@ -2,7 +2,7 @@
 
 Registry of all test suites. Update this when adding or removing test files.
 
-Toplam: **425 test**, tamamı geçiyor (2026-08-13).
+Toplam: **443 test**, tamamı geçiyor (2026-08-20).
 
 ---
 
@@ -14,10 +14,11 @@ Toplam: **425 test**, tamamı geçiyor (2026-08-13).
 | Ölçüm | `tests/unit/test_metrics.py` | TTF genişlik ölçümü, cap height, sığdı/sığmadı sınırları, eksik font/glif | ✅ |
 | Okuyucu | `tests/unit/test_ods_reader.py` | gizli satır/sütun, birleştirme + `covered`, görünen metin, hata kataloğu, `SRC_STALE` | ✅ |
 | Geometri | `tests/unit/test_geometry.py` | kenar tekilleştirme, eş doğrultulu birleştirme, birleşik alan iç ızgarası, hizalama, taşma modları, determinizm | ✅ |
+| Yazıcı | `tests/unit/test_dxf_writer.py` | `MTEXT` kaçışları, katman adları, `bylayer_defaults` renk kararı, diske yazmada `OSError` → `OUT_WRITE_FAILED` (çıktı AutoCAD'de açıkken) | ✅ |
 | Ayarlar | `tests/unit/test_config.py` | varsayılanların bugünkü davranışa eşitliği, TOML yükleme, tanınmayan anahtar/tip/aralık reddi, round-trip, `--set`, profil CRUD (kaydet/yükle/sil/yeniden adlandır) | ✅ |
-| CLI | `tests/unit/test_cli.py` | `--set` > bayrak > config > varsayılan önceliği, bayrak→ayar eşlemesi, DXF sürüm doğrulaması, `Job`/`Config` ayrımı, `--profile`, çıkış kodları | ✅ |
+| CLI | `tests/unit/test_cli.py` | `--set` > bayrak > config > varsayılan önceliği, bayrak→ayar eşlemesi, DXF sürümünün her giriş yolunda reddi (bayrak/config/`--set`), bayrak değerlerinin TOML'a çevrimi (Windows yolları, kesme işareti), `Job`/`Config` ayrımı, `--profile`, çıkış kodları | ✅ |
 | UI — formlar | `tests/unit/test_ui_forms.py` | tip→widget eşlemesi, metin↔değer round-trip (renk, nokta, liste, sayı), geçersiz girdi hataları — Tk kurmadan | ✅ |
-| UI — Girdi bölmesi | `tests/unit/test_ui_app.py` | blok adı önerisi (`dosya_sayfa`, yasak/boşluk karakteri temizliği), Windows "Yol olarak kopyala" tırnak temizliği — Tk kurmadan | ✅ |
+| UI — Girdi bölmesi | `tests/unit/test_ui_app.py` | blok adı önerisi (`dosya_sayfa`, yasak/boşluk karakteri temizliği), Windows "Yol olarak kopyala" tırnak temizliği, **arka plan iş parçacığının her koşulda bir sonuç bildirmesi** (kataloğa girmeyen istisnada da) — Tk kurmadan | ✅ |
 | Girdi kısayolları | `tests/unit/test_bookmarks.py` | `Job`↔`JobBookmark` round-trip, CRUD (kaydet/yükle/sil/yeniden adlandır), yasak ad, eksik/fazla/yanlış tipte alan, bozuk TOML, ters bölü/tırnak içeren yolların hayatta kalması | ✅ |
 | UI — akış | `tests/unit/test_ui_streaming.py` | `Report` satırlarının kuyruğa sırayla düşmesi, `print`'in fazladan `"\n"`'i, `drain()` sınırı — Tk kurmadan | ✅ |
 | UI — alan meta | `tests/unit/test_ui_fields.py` | bilinmeyen alan/bölüm çökmeden ham adına düşüyor; F-002 kataloğu ile `config.py`'nin gerçek alanları arasında kanarya testi | ✅ |

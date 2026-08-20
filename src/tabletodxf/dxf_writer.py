@@ -20,6 +20,7 @@ from ezdxf.enums import TextEntityAlignment
 from ezdxf.lldxf import const
 
 from .config import LayerConfig, OutputConfig, TextConfig
+from .errors import OUT_WRITE_FAILED, TableToDxfError
 from .geometry import BorderLine, Drawing, FillShape, FrameBox, TextBox, TextItem
 from .model import BLACK, HAlign, Rgb, VAlign
 from .report import Report
@@ -156,8 +157,7 @@ def write(
     if output_config.insert_block_reference:
         doc.modelspace().add_blockref(block_name, output_config.block_base_point)
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    doc.saveas(str(out_path))
+    _save(doc, out_path)
 
     report.info(
         "write_dxf",
@@ -171,6 +171,28 @@ def write(
         mtexts=len(drawing.boxes),
         condensed=len(drawing.condensed),
     )
+
+
+def _save(doc, out_path: Path) -> None:  # noqa: ANN001
+    """Diske yazma — `OSError` hata kataloğuna çevrilir.
+
+    En sık görülen hâli, çıktı DXF'inin hedef AutoCAD'de zaten açık olması:
+    Windows dosyayı kilitler ve `saveas` `PermissionError` atar. Bu bir kusur
+    değil, kullanıcının kapatıp yeniden deneyerek çözebileceği bir durum —
+    ham bir traceback yerine `[TBL ERROR]` satırını hak ediyor. Sarmalanmadan
+    bırakılırsa UI'ın arka plan iş parçacığından da kaçardı (F-003 AC-6).
+    """
+    try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        doc.saveas(str(out_path))
+    except OSError as exc:
+        raise TableToDxfError(
+            OUT_WRITE_FAILED,
+            op="write_dxf",
+            reason="output file could not be written — close it in AutoCAD if it is open",
+            file=str(out_path),
+            detail=type(exc).__name__,
+        ) from exc
 
 
 def _true_color(color: Rgb) -> int:

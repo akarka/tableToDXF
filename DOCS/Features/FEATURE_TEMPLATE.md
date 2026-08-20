@@ -42,14 +42,12 @@ Example: "Allow users to bulk-rename files matching a glob pattern, so they don'
 
 ### Data Model Changes
 
-```typescript
-// Describe any new or modified types/interfaces
-// Example:
-interface RenameOperation {
-  entityId: string;
-  newName: string;
-  previousName: string;  // required for undo
-}
+```python
+# Yeni ya da değişen tipleri tarif et. Örnek:
+@dataclass(frozen=True)
+class Border:
+    width_mm: float          # 0.0 = kenarlık yok
+    color: Rgb
 ```
 
 ### New Commands
@@ -111,4 +109,4 @@ interface RenameOperation {
 
 - ADR-[N]: [related architectural decision]
 - F-[N]: [related feature]
-- `DOCS/Architecture/Architectural_Mandates.md` §[section]
+- `CLAUDE.md` → Architectural Mandates §[madde]

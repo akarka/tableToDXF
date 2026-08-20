@@ -69,21 +69,23 @@ Error thrown:  [describe error type and message if testing an error path]
 **Priority:** Required
 **Status:** WRITTEN — PASSING
 
-**Given:** A user with email `existing@example.com` already exists in the repository
-**When:** `userService.create({ name: 'Bob', email: 'existing@example.com' })` is called
-**Then:** It throws a `UserExistsError` with code `USER_EXISTS`
+**Given:** Seçimin kenarını kesen bir birleştirme (`C4:D4`, seçim `B2:C7`)
+**When:** `ods_reader.read(...)` çağrılır
+**Then:** `MERGE_CROSSES_SELECTION` koduyla `TableToDxfError` atar ve hiçbir dosya yazılmaz
 
 **Setup:**
-```typescript
-mockRepo.findByEmail.mockResolvedValue(existingUser);
+```python
+spec = SheetSpec(name="Mahal", col_widths=["2cm", "2cm", "2cm"], rows=[...])
+source = build_ods(tmp_path / "kaynak.ods", [spec])
 ```
 
 **Expected:**
-```typescript
-await expect(
-  userService.create({ name: 'Bob', email: 'existing@example.com' })
-).rejects.toThrow(UserExistsError);
+```python
+with pytest.raises(TableToDxfError) as excinfo:
+    ods_reader.read(source, "Mahal", "B2:C7", report)
+assert excinfo.value.code == MERGE_CROSSES_SELECTION
+assert not list(tmp_path.glob("*.dxf"))
 ```
 
 **Edge cases covered:**
-- Email comparison is case-insensitive (also covers `EXISTING@EXAMPLE.COM`)
+- Seçimin tamamen içinde kalan birleştirme hata **vermez** (sınır durumu)

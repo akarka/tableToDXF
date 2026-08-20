@@ -11,7 +11,7 @@ This document defines the responsibilities, authority, and constraints of each r
 - Merge pull requests to `main`
 - Approve architectural decisions (ADRs)
 - Resolve escalations from agents
-- Own `.env`, credentials, and production access
+- Own the release: PyInstaller packaging, version tag, distribution
 
 **Authority:** Can override any agent decision. All agents defer to human judgment on ambiguous trade-offs.
 
@@ -28,11 +28,11 @@ This document defines the responsibilities, authority, and constraints of each r
 **Primary goal:** Ensure the codebase stays coherent, follows mandates, and that decisions are recorded.
 
 **Responsibilities:**
-- Maintain `DOCS/Architecture/` — keep mandates and ADRs up to date
+- Maintain `DOCS/Architecture/` — keep ADRs up to date; mandates live in `CLAUDE.md`
 - Open ADRs when a new pattern is introduced
 - Review implementations for architectural compliance
 - Flag mandate violations before they reach main
-- Update `System_Overview.md` when components change
+- Update `CLAUDE.md`'s pipeline and mandates sections when components change
 - Propose architectural improvements (with ADR, not silently)
 
 **Authority:**
@@ -41,7 +41,7 @@ This document defines the responsibilities, authority, and constraints of each r
 
 **Constraints:**
 - Does not implement features (no src/ changes except to enforce structure)
-- Does not deploy or build
+- Does not package (`.exe` build belongs to the human — ADR-004)
 
 ---
 
@@ -51,9 +51,10 @@ This document defines the responsibilities, authority, and constraints of each r
 
 **Responsibilities:**
 - Implement features described in `DOCS/Features/[F-N].md`
-- Follow all patterns in `DOCS/Architecture/Architectural_Mandates.md`
+- Follow all mandates in `CLAUDE.md` -> Architectural Mandates
 - Update the feature doc with implementation decisions
-- Create command classes for all mutations
+- Keep each external dependency inside its one owning module (odfpy -> `ods_reader`,
+  ezdxf -> `dxf_writer`, fontTools -> `metrics`, tkinter -> `ui/`)
 - Update `DOCS/Features/_INDEX.md` status during work
 
 **Authority:**
@@ -99,26 +100,26 @@ This document defines the responsibilities, authority, and constraints of each r
 - [ ] Error paths produce the correct error codes and messages
 
 **Architecture**
-- [ ] All mutations go through `CommandManager`
-- [ ] Services are stateless and depend on interfaces
-- [ ] No secrets, API keys, or hardcoded config values
-- [ ] Boundary validation present at all entry points
+- [ ] Layer purity intact: no new import crosses a module's dependency boundary
+- [ ] New settings live in `config.py`; closed-ended ones are `Literal`, not free-form `str`
+- [ ] Validation sits where **every** entry path reaches it (CLI, UI, library `convert()`)
+- [ ] No hardcoded values that belong in `Config`
 
 **Testing**
-- [ ] Unit tests cover domain logic (≥90% branch coverage)
-- [ ] Integration test covers the happy path
-- [ ] No test-only code in production source
+- [ ] Unit tests cover the new logic, including its error paths
+- [ ] A behaviour change is pinned by a test that fails without the fix
+- [ ] `DOCS/Testing/TEST_INDEX.md` updated if the count or coverage changed
 
 **Code Quality**
 - [ ] No circular imports
 - [ ] No commented-out code
-- [ ] Log messages are structured (key=value format)
-- [ ] No `console.log` left in production code
+- [ ] Report lines follow the `op=… cell=… reason="…"` format
+- [ ] No stray `print()` outside `report.py`
 
-**Security**
-- [ ] No SQL string concatenation
-- [ ] No user input in shell commands
-- [ ] No stack traces or internal paths in user-facing errors
+**Robustness**
+- [ ] User-reachable failures raise `TableToDxfError` with a catalog code, never a bare exception
+- [ ] No partial output on the error path (neither `.dxf` nor `.report.txt`)
+- [ ] Nothing that can escape a background thread and hang the UI
 
 **Constraints:**
 - Must produce a written review summary (not just approve/reject)
@@ -132,10 +133,10 @@ This document defines the responsibilities, authority, and constraints of each r
 
 **Responsibilities:**
 - Update feature docs when implementation deviates from the spec
-- Update `System_Overview.md` when architecture changes
-- Maintain `DOCS/Runbooks/` — onboarding, deploy, incident response
+- Update `README.md` and `CLAUDE.md` when architecture or user-facing behaviour changes
+- Maintain `DOCS/Runbooks/ONBOARDING.md` (the only runbook this project needs)
 - Flag stale ADRs for archival or update
-- Ensure `CLAUDE.md` reflects the current tech stack and build command
+- Ensure `CLAUDE.md` reflects the current tech stack, pipeline, and mandates
 
 **Constraints:**
 - Does not change code, only docs

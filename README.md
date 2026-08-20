@@ -2,13 +2,22 @@
 
 LibreOffice Calc'ta biçimlendirilmiş bir `.ods` tablo alanını, kendi kendine yeten bir AutoCAD
 **blok tanımına** çevirir. Çizim hiçbir harici dosyaya bağımlı kalmaz; kaynak veri değiştiğinde
-aynı komut yeniden çalıştırılır ve blok yeniden tanımlandığında çizimdeki tüm örnekler güncellenir.
+aynı iş yeniden çalıştırılır ve blok yeniden tanımlandığında çizimdeki tüm örnekler güncellenir.
 
 Stil, kullanıcının zaten bildiği araçta — Calc'ta — düzenlenir. Öğrenilecek yeni bir biçim dosyası
 yoktur: kenarlıklar, dolgular, hizalamalar, birleştirmeler ve sayı biçimleri doğrudan sayfadan
 okunur ([ADR-002](DOCS/Architecture/ADR_002_sheet_is_style_editor.md)).
 
-Tam şartname: [`DOCS/Features/F-001.md`](DOCS/Features/F-001.md)
+İki arayüz var; **ikisi de aynı çekirdeği** kullanır (`Config` / `Job` / `convert()`), bu yüzden
+davranışları ayrışmaz:
+
+| Arayüz | Ne zaman |
+|---|---|
+| **[Masaüstü uygulaması](#masaüstü-uygulaması-ui)** — `tabletodxf-ui` | Günlük kullanım. Komut satırı görmeden: profiller, kayıtlı girdiler, canlı rapor |
+| **[Komut satırı](#komut-satırı)** — `tabletodxf` | Toplu iş, betik, otomasyon |
+
+Tam şartname: [`F-001`](DOCS/Features/F-001.md) (çekirdek), [`F-002`](DOCS/Features/F-002.md)
+(ayarlar), [`F-003`](DOCS/Features/F-003.md) (UI)
 
 ---
 
@@ -20,11 +29,68 @@ python -m venv .venv
 # python -m pip install -e ".[dev]"                     # Linux/macOS
 ```
 
-Python 3.11+ gerekir (`tomllib` stdlib'de).
+Python 3.11+ gerekir (`tomllib` stdlib'de). Kurulum iki komut bırakır: `tabletodxf-ui`
+(masaüstü uygulaması) ve `tabletodxf` (komut satırı).
+
+Python kurulu olmayan bir Win10+ makinede çalıştırmak için **paketleme** `PyInstaller` ile,
+insan tarafından yapılır — bkz. [ADR-004](DOCS/Architecture/ADR_004_ui_and_packaging.md).
 
 ---
 
-## Kullanım
+## Masaüstü Uygulaması (UI)
+
+Komut satırı görmeden kullanmak için `tkinter` tabanlı bir arayüz (F-003, ADR-004). Günlük
+kullanımın beklenen yolu budur; CLI **kaybolmaz**, ikisi de aynı çekirdeği çağırır.
+
+```bash
+tabletodxf-ui                            # kurulumdan sonra
+PYTHONPATH=src python -m tabletodxf.ui   # kurulum olmadan
+```
+
+Windows'ta `tabletodxf-ui` arkada boş bir konsol penceresi bırakmaz (`gui-scripts`
+sarmalayıcısı). Bir sorunu teşhis ederken `python -m tabletodxf.ui` tercih edilebilir —
+konsol açık kalır.
+
+### Pencere
+
+| Bölüm | İçerik |
+|---|---|
+| **Profil çubuğu** | Ayar profili yükle / kaydet / farklı kaydet / yeniden adlandır / sil |
+| **Girdi alanları** | `.ods` seçimi (sayfa açılır kutusu dosya seçilince kendiliğinden dolar), aralık, blok adı, çıktı DXF yolu |
+| **Kayıtlı Girdi** | Girdi alanlarının adlandırılmış kısayolları — profillerden bağımsız |
+| **Ayar sekmeleri** | `Config`'in her bölümü için bir sekme; F-002 kataloğundan **otomatik üretilir** |
+| **Çalıştır + rapor bölmesi** | Dönüştürme ayrı bir iş parçacığında; büyük tabloda bile pencere donmaz, `[TBL …]` satırları canlı akar |
+
+Ayar formu `Config` şemasından üretilir: F-002'ye yeni bir ayar eklendiğinde UI otomatik
+büyür, ayrı bir "arayüzü de güncelle" adımı gerekmez. Alanın tipi widget'ı seçer — `Literal`
+bir ayar açılır kutu, renk bir renk seçici, `bool` bir onay kutusu olur.
+
+### Kayıtlı girdiler
+
+Girdi alanları (`.ods` yolu, sayfa, aralık, blok adı, çıktı yolu) adlandırılıp saklanabilir —
+[profillerden](#profiller) tamamen bağımsız olarak, `%LOCALAPPDATA%\OncuCAD\TableToDXF\inputs\`
+altında. İstenen kısayol istenen ayar profiliyle serbestçe birleştirilir; sık işlenen birkaç
+tabloyu (ör. "Blok A - Mahal", "Blok A - Çizim") tek tıkla geri çağırmak içindir.
+
+### Hata durumunda
+
+Kataloglu her hata (`SRC_SHEET_NOT_FOUND`, `MERGE_CROSSES_SELECTION`, `FONT_NOT_FOUND`, …)
+rapor bölmesine `[TBL ERROR]` satırı olarak düşer ve durum çubuğu "Durdu — hiçbir dosya
+üretilmedi." der. En sık karşılaşılan durum, **çıktı DXF'inin AutoCAD'de açık olması**:
+Windows dosyayı kilitler, araç `OUT_WRITE_FAILED` ile durur. Dosyayı kapatıp yeniden çalıştırmak
+yeterlidir.
+
+Beklenmedik bir istisna (yani bir kusur) çıkarsa çalıştırma yine **biter**: satır
+`code=UNEXPECTED` ile, arkasından traceback rapor bölmesine yazılır. Pencere hiçbir durumda
+"Çalışıyor…" hâlinde asılı kalmaz.
+
+Ayrıntılar ve mimari kararlar: [`DOCS/Features/F-003.md`](DOCS/Features/F-003.md).
+
+---
+
+## Komut Satırı
+
+Toplu iş ve betikler için. UI ile aynı çekirdeği çağırır.
 
 ```bash
 tabletodxf mahal.ods --sheet Mahal --range B2:E7 --out mahal.dxf --block ONCU_TBL_MAHAL
@@ -51,7 +117,7 @@ PYTHONPATH=src python -m tabletodxf mahal.ods --sheet Mahal --range B2:E7 \
 | `--text-style` | `ONCU_TBL_TEXT` | DXF metin stili adı |
 | `--font` | `NotoSans-Regular.ttf` | ölçüm ve stil için TTF |
 | `--layer-prefix` | `ONCU_TBL` | katman ad alanı |
-| `--dxf-version` | `R2013` | R2013 ve üstü |
+| `--dxf-version` | `R2013` | `R2013` veya `R2018` |
 | `--bylayer-defaults` | kapalı | tam siyah kenarlık/metni katman rengine (BYLAYER) bırak — aşağıya bakın |
 | `--report` | `<out>.report.txt` | rapor dosyası yolu |
 | `--verbose` | kapalı | `[TBL DEBUG]` satırlarını da bas |
@@ -111,36 +177,6 @@ tabletodxf mahal.ods --sheet Mahal --range B2:F40 --out t.dxf --block T --profil
 Profiller `%LOCALAPPDATA%\OncuCAD\TableToDXF\profiles\<ad>.toml` altında durur — proje
 klasöründen bağımsız, kullanıcı başına, makineye özgü. `--profile`, `--config`'in yerini alan bir
 kısayoldur; ikisi birlikte verilemez. Ayrıntılar: [`DOCS/Features/F-002.md`](DOCS/Features/F-002.md#profil-yönetimi).
-
----
-
-## Masaüstü Uygulaması (UI)
-
-Komut satırı görmeden kullanmak için `tkinter` tabanlı bir arayüz var (F-003, ADR-004). CLI
-**kaybolmaz** — ikisi de aynı `Config`/`Job`/`convert()` yüzeyini kullanır, davranış ayrışmaz.
-
-```bash
-tabletodxf-ui                    # kurulumdan sonra (pip install -e . ile gelir)
-PYTHONPATH=src python -m tabletodxf.ui   # kurulum olmadan
-```
-
-Pencere: profil çubuğu (yükle/kaydet/farklı kaydet/sil), `.ods` seçimi (sayfa açılır kutusu
-otomatik dolar), yedi ayar sekmesi (`Config`'in her bölümü için bir tane — F-002 kataloğundan
-otomatik üretilir), **Çalıştır** düğmesi ve canlı akan bir rapor bölmesi. Dönüştürme ayrı bir iş
-parçacığında çalışır; büyük bir tabloda bile pencere donmaz.
-
-Ayar formu `Config` şemasından üretilir: F-002'ye yeni bir ayar eklendiğinde UI otomatik büyür,
-ayrı bir "arayüzü de güncelle" adımı gerekmez.
-
-Girdi alanları (`.ods` yolu, sayfa, aralık, blok adı, çıktı yolu) da **Kayıtlı Girdi** ile
-adlandırılıp saklanabilir — profillerden tamamen bağımsız (`%LOCALAPPDATA%\OncuCAD\TableToDXF\inputs\`).
-İstenen kısayol istenen ayar profiliyle serbestçe birleştirilir; sık işlenen birkaç tabloyu
-(ör. "Blok A - Mahal", "Blok A - Çizim") tek tıkla geri çağırmak içindir.
-
-Ayrıntılar ve mimari kararlar: [`DOCS/Features/F-003.md`](DOCS/Features/F-003.md).
-
-**Paketleme** (Python kurulu olmayan bir Win10+ makinede çalıştırmak için) `PyInstaller` ile,
-insan tarafından yapılır — bkz. [ADR-004](DOCS/Architecture/ADR_004_ui_and_packaging.md).
 
 ---
 
@@ -280,7 +316,7 @@ düzeltirsiniz; araç sessizce kaymış bir tablo üretmez.
 ## Geliştirme
 
 ```bash
-.venv/Scripts/python.exe -m pytest          # 425 test
+.venv/Scripts/python.exe -m pytest          # 443 test
 .venv/Scripts/python.exe -m pytest tests/unit -q
 ```
 

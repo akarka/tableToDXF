@@ -23,7 +23,7 @@ Type: feedback
 When to save: immediately after correction or confirmation
 Format: Rule → Why → How to apply
 Example:
-  "Don't add console.log debug statements in PRs — I can see diffs, I don't need narration"
+  "Don't add print() debug statements in PRs — I can see diffs, I don't need narration"
   Saves as: feedback_no_debug_logs.md
 ```
 

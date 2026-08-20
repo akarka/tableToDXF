@@ -7,9 +7,21 @@ gerçek Tk ile yapılan manuel doğrulamada kapsanır (F-003 → Test Plan).
 
 from __future__ import annotations
 
+import queue
+from pathlib import Path
+
 import pytest
 
-from tabletodxf.ui.app import strip_wrapping_quotes, suggest_block_name
+from tabletodxf.api import Job
+from tabletodxf.config import Config
+from tabletodxf.errors import SRC_NOT_FOUND, UNEXPECTED, TableToDxfError
+from tabletodxf.ui.app import (
+    MainWindow,
+    _as_catalog_error,
+    strip_wrapping_quotes,
+    suggest_block_name,
+)
+from tabletodxf.ui.streaming import RunFailed, RunOutcome, drain
 
 
 # ── strip_wrapping_quotes ────────────────────────────────────────────────
@@ -99,3 +111,97 @@ def test_turkish_characters_survive() -> None:
 def test_every_forbidden_character_is_scrubbed(sheet: str) -> None:
     result = suggest_block_name("c.ods", sheet)
     assert not set(result) & {"<", ">", "/", "\\", '"', ";", "?", "*", "|", ",", "="}
+
+
+# ── Arka plan iş parçacığı: hiçbir çalıştırma yarıda kalmamalı ───────────────
+
+
+def _job() -> Job:
+    return Job(
+        source=Path("mahal.ods"),
+        sheet="Mahal",
+        range_text="B2:E7",
+        out=Path("mahal.dxf"),
+        block="TBL",
+    )
+
+
+def _worker_outcome(monkeypatch, raiser) -> RunOutcome:  # noqa: ANN001
+    """`_run_worker`'ı Tk kurmadan çalıştırır.
+
+    Metot yalnızca iki kuyruğa dokunuyor (AC-6 gereği hiçbir widget'a
+    dokunmuyor), bu yüzden sahte bir `self` yeterli.
+    """
+
+    class _Stub:
+        def __init__(self) -> None:
+            self._log_queue: queue.Queue[str] = queue.Queue()
+            self._result_queue: queue.Queue[RunOutcome] = queue.Queue()
+
+    stub = _Stub()
+    monkeypatch.setattr("tabletodxf.ui.app.convert", raiser)
+    MainWindow._run_worker(stub, _job(), Config())
+    return stub._result_queue.get_nowait()
+
+
+def test_unexpected_exception_still_finishes_the_run(monkeypatch) -> None:  # noqa: ANN001
+    """Regresyon: kataloğa girmeyen istisna iş parçacığıyla sessizce ölüyordu.
+
+    `_result_queue`'ya hiçbir şey konmadığı için `_finish_run` hiç çağrılmıyor,
+    pencere "Çalışıyor…" durumunda — Çalıştır düğmesi devre dışı, ilerleme
+    çubuğu dönerken — sonsuza kadar asılı kalıyordu.
+    """
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise PermissionError("cikti.dxf AutoCAD'de açık")
+
+    outcome = _worker_outcome(monkeypatch, boom)
+    assert isinstance(outcome, RunFailed)
+    assert outcome.error.code == UNEXPECTED
+    assert outcome.error.fields["detail"] == "PermissionError"
+
+
+def test_catalog_errors_still_take_the_normal_path(monkeypatch) -> None:  # noqa: ANN001
+    """Yakalama dalı eklenirken bilinen hataların yolu değişmemeli."""
+
+    def stop(*_args: object, **_kwargs: object) -> None:
+        raise TableToDxfError(
+            SRC_NOT_FOUND, op="read_source", reason="file not found", file="mahal.ods"
+        )
+
+    outcome = _worker_outcome(monkeypatch, stop)
+    assert isinstance(outcome, RunFailed)
+    assert outcome.error.code == SRC_NOT_FOUND
+
+
+def test_unexpected_exception_leaves_a_traceback_in_the_log(monkeypatch) -> None:  # noqa: ANN001
+    """Beklenmedik istisna bir kusurdur; teşhis edilebilir kalmalı."""
+
+    class _Stub:
+        def __init__(self) -> None:
+            self._log_queue: queue.Queue[str] = queue.Queue()
+            self._result_queue: queue.Queue[RunOutcome] = queue.Queue()
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise ZeroDivisionError("bolme hatasi")
+
+    stub = _Stub()
+    monkeypatch.setattr("tabletodxf.ui.app.convert", boom)
+    MainWindow._run_worker(stub, _job(), Config())
+
+    logged = "\n".join(drain(stub._log_queue))
+    assert "Traceback" in logged
+    assert "ZeroDivisionError" in logged
+
+
+# ── _as_catalog_error ────────────────────────────────────────────────────
+
+
+def test_exception_message_is_carried_into_the_report_line() -> None:
+    error = _as_catalog_error(PermissionError("dosya kullanımda"))
+    assert error.code == UNEXPECTED
+    assert "dosya kullanımda" in error.reason
+
+
+def test_exception_without_a_message_falls_back_to_its_type_name() -> None:
+    assert _as_catalog_error(RuntimeError()).reason == "RuntimeError"

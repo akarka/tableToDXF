@@ -85,5 +85,5 @@ Follow with 1-2 sentences on the scope of where this applies.]
 ## Related
 
 - ADR-[N]: [related decision title]
-- `DOCS/Architecture/Architectural_Mandates.md` §[section number]
+- `CLAUDE.md` → Architectural Mandates §[madde numarası]
 - `DOCS/Features/[feature].md` *(if this ADR was triggered by a feature)*

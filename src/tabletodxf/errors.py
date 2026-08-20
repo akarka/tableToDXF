@@ -48,3 +48,8 @@ CELL_OVERFLOW = "CELL_OVERFLOW"  # WARN seviyesi
 FONT_NOT_FOUND = "FONT_NOT_FOUND"
 SELECTION_EMPTY = "SELECTION_EMPTY"
 CONFIG_INVALID = "CONFIG_INVALID"
+OUT_WRITE_FAILED = "OUT_WRITE_FAILED"
+# Kataloğa girmeyen her şey. Bir kullanıcı hatası değil, bir kusurdur; ama
+# arayüzün "hiç bitmeyen çalıştırma" hâlinde kalmasındansa kodlanmış bir hata
+# olarak görünmesi gerekir (F-003 AC-6).
+UNEXPECTED = "UNEXPECTED"

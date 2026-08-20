@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import pytest
-from tabletodxf.dxf_writer import _wants_true_color, escape_mtext, layer_names
+from tabletodxf.dxf_writer import (
+    _save,
+    _wants_true_color,
+    escape_mtext,
+    layer_names,
+)
+from tabletodxf.errors import OUT_WRITE_FAILED, TableToDxfError
 
 
 def test_layer_names_use_the_prefix() -> None:
@@ -55,3 +61,40 @@ def test_bylayer_on_only_affects_pure_black() -> None:
     assert _wants_true_color((255, 0, 0), bylayer_defaults=True)
     assert _wants_true_color((0, 0, 1), bylayer_defaults=True)  # neredeyse siyah, ama değil
     assert _wants_true_color((255, 255, 255), bylayer_defaults=True)
+
+
+# ── Diske yazma (_save) ─────────────────────────────────────────────────────
+
+
+def test_locked_output_file_becomes_a_catalog_error(tmp_path) -> None:  # noqa: ANN001
+    """Çıktı DXF'i AutoCAD'de açıkken Windows dosyayı kilitler.
+
+    Bu bir kusur değil, kullanıcının kapatıp yeniden deneyerek çözebileceği bir
+    durum. Sarmalanmadan bırakıldığında CLI'da ham traceback basıyordu, UI'da
+    ise arka plan iş parçacığından kaçıp pencereyi "Çalışıyor…" durumunda
+    sonsuza kadar asılı bırakıyordu.
+    """
+
+    class _LockedDoc:
+        def saveas(self, path: str) -> None:
+            raise PermissionError(13, "Permission denied")
+
+    with pytest.raises(TableToDxfError) as excinfo:
+        _save(_LockedDoc(), tmp_path / "alt" / "cikti.dxf")
+
+    assert excinfo.value.code == OUT_WRITE_FAILED
+    assert excinfo.value.fields["detail"] == "PermissionError"
+
+
+def test_successful_save_creates_missing_parent_directories(tmp_path) -> None:  # noqa: ANN001
+    written: list[str] = []
+
+    class _Doc:
+        def saveas(self, path: str) -> None:
+            written.append(path)
+
+    target = tmp_path / "yeni" / "klasor" / "cikti.dxf"
+    _save(_Doc(), target)
+
+    assert target.parent.is_dir()
+    assert written == [str(target)]

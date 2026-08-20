@@ -26,6 +26,17 @@ from .model import BLACK, HAlign, Rgb, VAlign
 
 OverflowMode = Literal["condense", "mtext", "marker", "full"]
 
+# `ezdxf.new()`'in kabul ettiği R2013 ve üstü sürümlerin tamamı. Sürüm bir
+# görünüm ayarı değil doğruluk koşulu: AC-9 Kiril/CJK istiyor, bu da TTF tabanlı
+# metin stili demek ve R2013 altı bunu taşımaz.
+#
+# `Literal` olması kontrolü tip katmanına taşıyor. Daha önce bu denetim yalnızca
+# `cli.py`'de duruyordu; UI ve kütüphane `convert()`'i doğrudan çağırdığı için
+# onlarda hiç çalışmıyordu ve Çıktı sekmesine `R12` yazmak sessizce AC1009 bir
+# dosya ürettiriyordu. Şimdi config dosyası, `--set`, adanmış bayrak ve UI formu
+# aynı kapıdan geçiyor; hiçbiri atlanamıyor.
+DxfVersion = Literal["R2013", "R2018"]
+
 WHITE: Rgb = (255, 255, 255)
 
 DEFAULT_CONFIG_NAME = "tabletodxf.toml"
@@ -177,7 +188,7 @@ class LayerConfig:
 
 @dataclass(frozen=True)
 class OutputConfig:
-    dxf_version: str = "R2013"
+    dxf_version: DxfVersion = "R2013"
     # Blok tanımının yanına model uzayına bir INSERT konsun mu. Kapatılırsa
     # dosya doğrudan açıldığında boş görünür (tanım durur).
     insert_block_reference: bool = True
@@ -194,9 +205,6 @@ class OutputConfig:
     # hiçbir şeye dokunulmaz. Kalınlık bu kararın dışında — polyline global
     # width'i zaten gerçek geometri, katman `lineweight`'i burada anlamsız.
     bylayer_defaults: bool = False
-
-    def validate(self) -> None:
-        _non_empty("output.dxf_version", self.dxf_version)
 
 
 @dataclass(frozen=True)

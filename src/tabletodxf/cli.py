@@ -13,21 +13,24 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import get_args
 
 from .api import Job, convert, resolve_font  # noqa: F401 — resolve_font geriye dönük dışa açık
 from .config import (
     DEFAULT_CONFIG_NAME,
     DEFAULT_PROFILE_NAME,
     Config,
+    DxfVersion,
     apply_overrides,
     find_config_file,
     load_config,
     load_profile,
 )
-from .errors import CONFIG_INVALID, TableToDxfError, UsageError
+from .errors import TableToDxfError, UsageError
 from .report import Report
 
 OVERFLOW_MODES = ("condense", "mtext", "marker", "full")
+DXF_VERSIONS = get_args(DxfVersion)
 
 EXIT_OK = 0
 EXIT_DATA_ERROR = 1
@@ -99,7 +102,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--text-style", dest="text_style", default=None)
     parser.add_argument("--font", default=None, help="ölçüm ve stil için TTF")
     parser.add_argument("--layer-prefix", dest="layer_prefix", default=None)
-    parser.add_argument("--dxf-version", dest="dxf_version", default=None)
+    parser.add_argument(
+        "--dxf-version",
+        dest="dxf_version",
+        choices=DXF_VERSIONS,
+        default=None,
+        help="R2013 veya R2018 — eskisi TTF metin stili taşımaz",
+    )
     parser.add_argument(
         "--bylayer-defaults",
         dest="bylayer_defaults",
@@ -149,10 +158,24 @@ def build_config(args: argparse.Namespace, cwd: Path | None = None) -> Config:
 
 
 def _as_toml(value: object) -> str:
+    r"""Bayrak değerini `--set`'in beklediği TOML skalerine çevirir.
+
+    Metin, TOML **literal** dizesi (tek tırnak) olarak verilir: literal dizede
+    kaçış dizisi yoktur, bu yüzden Windows yolları olduğu gibi geçer. Daha önce
+    çift tırnaklı temel dize kullanılıyordu ve ters bölü kaçış sayıldığı için
+    `--font C:\fonts\noto.ttf` sessizce `C:\x0conts…` oluyordu (`\f` geçerli bir
+    TOML kaçışı); `\U` gibi geçersiz bir kaçış varsa da ayrıştırma düşüyor ve
+    değer **tırnaklarıyla birlikte** metne kalıyordu.
+    """
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, str):
-        return f'"{value}"'
+        if "'" not in value and "\n" not in value:
+            return f"'{value}'"
+        # Kesme işareti ya da satır sonu taşıyan değer literal dizede
+        # taşınamaz; temel dizeye düşülür ve kaçışlar elle uygulanır.
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+        return f'"{escaped}"'
     return str(value)
 
 
@@ -166,35 +189,6 @@ def build_job(args: argparse.Namespace) -> Job:
         report_path=Path(args.report) if args.report else None,
         verbose=bool(args.verbose),
     )
-
-
-def validate_dxf_version(name: str) -> str:
-    """R2013 altını reddeder.
-
-    AC-9 Kiril/CJK'yı şart koşuyor; bu da TTF tabanlı metin stili ve Unicode
-    metin demek. Eski sürümler bunu taşımaz — R12 çıktısı sessizce bozuk glif
-    üretirdi. Sürüm bir görünüm ayarı değil, doğruluk koşulu.
-    """
-    from ezdxf.lldxf import const
-
-    requested = name.strip().upper()
-    code = const.acad_release_to_dxf_version.get(requested, requested)
-    if code not in const.versions_supported_by_new:
-        raise UsageError(
-            CONFIG_INVALID,
-            op="load_config",
-            reason="unknown DXF version",
-            dxf_version=name,
-            supported="R2013, R2018",
-        )
-    if code < const.acad_release_to_dxf_version["R2013"]:
-        raise UsageError(
-            CONFIG_INVALID,
-            op="load_config",
-            reason="DXF version must be R2013 or newer — older versions cannot carry TTF text styles",
-            dxf_version=name,
-        )
-    return requested
 
 
 def _harden_console() -> None:
@@ -220,9 +214,6 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         config = build_config(args)
-        # DXF sürümü ezdxf'e sorularak doğrulanır; `config.py` saf veri kalsın
-        # diye bu kontrol burada duruyor (ADR-003).
-        validate_dxf_version(config.output.dxf_version)
         convert(build_job(args), config, report)
     except UsageError as error:
         _print_error(error)

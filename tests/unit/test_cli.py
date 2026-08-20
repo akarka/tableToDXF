@@ -20,7 +20,6 @@ from tabletodxf.cli import (
     build_job,
     build_parser,
     main,
-    validate_dxf_version,
 )
 from tabletodxf.config import Config, SourceConfig, apply_overrides, save_profile
 from tabletodxf.errors import CONFIG_INVALID, FONT_NOT_FOUND, TableToDxfError, UsageError
@@ -251,21 +250,74 @@ def test_malformed_set_is_rejected(tmp_path: Path) -> None:
 # ── DXF sürümü ──────────────────────────────────────────────────────────────
 
 
-def test_r2018_is_accepted() -> None:
-    assert validate_dxf_version("R2018") == "R2018"
+#
+# Denetim artık `config.DxfVersion` `Literal`'ında; her giriş yolu (bayrak,
+# config dosyası, `--set`, UI formu) aynı kapıdan geçiyor. Eskiden yalnızca
+# `cli.py`'de bir yardımcı vardı ve UI onu hiç çağırmadığı için Çıktı sekmesine
+# `R12` yazmak sessizce AC1009 bir dosya ürettiriyordu.
+
+
+def test_r2018_is_accepted(tmp_path: Path) -> None:
+    config = build_config(parse(["--dxf-version", "R2018"]), cwd=tmp_path)
+    assert config.output.dxf_version == "R2018"
 
 
 @pytest.mark.parametrize("old", ["R12", "R2000", "R2010"])
-def test_versions_below_r2013_are_rejected(old: str) -> None:
+def test_versions_below_r2013_are_rejected_by_the_flag(old: str) -> None:
     """AC-9 TTF metin stili gerektiriyor; eski sürümler bunu taşımaz."""
+    with pytest.raises(SystemExit) as excinfo:
+        parse(["--dxf-version", old])
+    assert excinfo.value.code == EXIT_USAGE_ERROR
+
+
+@pytest.mark.parametrize("bad", ["R12", "R2010", "R9999", ""])
+def test_versions_below_r2013_are_rejected_in_a_config_file(
+    bad: str, tmp_path: Path
+) -> None:
+    """Bayrak kapalı uçlu; asıl kapı config katmanında — UI de oradan geçiyor."""
+    config_file = tmp_path / "tabletodxf.toml"
+    config_file.write_text(f'[output]\ndxf_version = "{bad}"\n', encoding="utf-8")
     with pytest.raises(UsageError) as excinfo:
-        validate_dxf_version(old)
+        build_config(parse(["--config", str(config_file)]), cwd=tmp_path)
     assert excinfo.value.code == CONFIG_INVALID
 
 
-def test_unknown_version_is_rejected() -> None:
+def test_unknown_version_is_rejected_by_set(tmp_path: Path) -> None:
     with pytest.raises(UsageError):
-        validate_dxf_version("R9999")
+        build_config(parse(["--set", "output.dxf_version=R9999"]), cwd=tmp_path)
+
+
+# ── Bayrak değerlerinin TOML'a çevrimi ──────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        r"C:\fonts\noto.ttf",  # `\f` ve `\n` geçerli TOML kaçışları
+        r"C:\Users\x\arial.ttf",  # `\U` geçersiz kaçış
+        r"D:\isler\tablo\font.ttf",
+        r"C:\temp\a.ttf",
+        "C:/fonts/noto.ttf",
+        "arial.ttf",
+    ],
+)
+def test_windows_font_paths_survive_the_flag(path: str, tmp_path: Path) -> None:
+    r"""Bayrak değeri `--set` mekanizmasından geçer; ters bölü kaçış olmamalı.
+
+    Regresyon: değer çift tırnaklı TOML dizesi olarak veriliyordu.
+    `C:\fonts\noto.ttf` sessizce `C:\x0conts…`e dönüşüyor (`\f` = form feed),
+    `\U` gibi geçersiz bir kaçış varsa da ayrıştırma düşüp değer
+    **tırnaklarıyla birlikte** metne kalıyordu — her iki hâlde de sonuç
+    kullanıcının anlamlandıramayacağı bir `FONT_NOT_FOUND` oluyordu.
+    """
+    config = build_config(parse(["--font", path]), cwd=tmp_path)
+    assert config.text.font_file == path
+
+
+def test_flag_value_with_an_apostrophe_survives(tmp_path: Path) -> None:
+    """Literal dize kesme işareti taşıyamaz; temel dizeye düşülür."""
+    config = build_config(parse(["--layer-prefix", "O'BRIEN"]), cwd=tmp_path)
+    assert config.layers.prefix == "O'BRIEN"
 
 
 # ── Job ─────────────────────────────────────────────────────────────────────

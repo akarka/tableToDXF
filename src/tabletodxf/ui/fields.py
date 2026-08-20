@@ -137,7 +137,7 @@ _RAW: dict[str, dict[str, tuple[str, str]]] = {
         ),
     },
     "output": {
-        "dxf_version": ("DXF sürümü", "R2013 ve üstü — eskisi TTF metin stili taşımaz"),
+        "dxf_version": ("DXF sürümü", "R2013 veya R2018 — eskisi TTF metin stili taşımaz"),
         "insert_block_reference": (
             "Model uzayına INSERT eklensin",
             "Kapalıysa yalnızca blok tanımı yazılır, dosya doğrudan açılınca boş görünür",

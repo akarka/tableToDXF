@@ -36,7 +36,7 @@ Then check `DOCS/Features/_INDEX.md`:
 
 - **One agent edits one file at a time.** If a file appears in another agent's active task, skip it and note the dependency.
 - **`CLAUDE.md` / `AGENTS.md`** — treat as read-only during active tasks. Propose changes via a comment in your response; let the human apply them.
-- **Migration files / schema changes** — never auto-generate. Always confirm with human first.
+- **Packaging (`.exe`) and releases** — never run PyInstaller. Always confirm with human first.
 - **Lock files** (`package-lock.json`, `Pipfile.lock`, `*.lock`) — human-managed only.
 - **CI/CD pipeline files** (`.github/workflows/`) — do not modify without explicit human instruction.
 
@@ -63,7 +63,7 @@ refactor/[short-name]   ← refactoring with no behavior change
 
 ```bash
 # Stage specific files — never `git add .` blindly
-git add src/services/user-service.ts tests/unit/user-service.test.ts
+git add src/tabletodxf/ods_reader.py tests/unit/test_ods_reader.py
 
 # Commit message format: <type>: <what changed>
 # Types: feat | fix | refactor | test | docs | chore
@@ -129,7 +129,7 @@ Stop and ask the human when:
 
 No agent should:
 - Run `[BUILD_COMMAND]` (see `CLAUDE.md`)
-- Apply database migrations in any environment
+- Overwrite the user's profiles or saved inputs under `%LOCALAPPDATA%\OncuCAD\TableToDXF`
 - Push to `main`
 - Modify CI/CD pipeline without human review
 

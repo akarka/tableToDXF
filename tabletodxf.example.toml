@@ -88,7 +88,7 @@ overflow_color  = 1        # kırmızı: ### içerik değil, teşhis çıktısı
 
 # ── DXF çıktısı ─────────────────────────────────────────────────────────────
 [output]
-dxf_version            = "R2013"   # R2013 ve üstü; eskisi TTF stili taşımaz
+dxf_version            = "R2013"   # yalnızca "R2013" | "R2018"; eskisi TTF stili taşımaz
 insert_block_reference = true      # blok tanımının yanına model uzayına bir INSERT
 block_base_point       = [0.0, 0.0]
 write_report           = true      # başarılı çalıştırmada .report.txt

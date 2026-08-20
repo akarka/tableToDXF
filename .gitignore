@@ -64,3 +64,8 @@ temp/
 # Package managers
 .yarn/
 .pnpm-store/
+
+# Şablondan kalan, bu projede karşılığı olmayan dosyalar (2026-08-20).
+# Diskte duruyor ki geri alınabilsin; ağaçta durmuyor ki agent onları
+# bu projenin kuralı sanmasın.
+_sablon_arsiv/

@@ -11,6 +11,7 @@ import os
 import queue
 import sys
 import threading
+import traceback
 import tkinter as tk
 from dataclasses import replace
 from pathlib import Path
@@ -39,7 +40,7 @@ from ..config import (
     rename_profile,
     save_profile,
 )
-from ..errors import TableToDxfError, UsageError
+from ..errors import UNEXPECTED, TableToDxfError, UsageError
 from ..ods_reader import list_sheets
 from ..report import Report, format_line
 from .fields import TAB_ORDER, section_title
@@ -638,6 +639,10 @@ class MainWindow:
             result = convert(job, config, report)
         except (TableToDxfError, UsageError) as exc:
             self._result_queue.put(RunFailed(exc))
+        except Exception as exc:  # noqa: BLE001 — gerekçe `_as_catalog_error`'da
+            for line in traceback.format_exc().rstrip().splitlines():
+                self._log_queue.put(line)
+            self._result_queue.put(RunFailed(_as_catalog_error(exc)))
         else:
             self._result_queue.put(RunOk(result))
 
@@ -714,6 +719,27 @@ class MainWindow:
         else:
             message = str(error)
         messagebox.showerror(title, message)
+
+
+def _as_catalog_error(exc: BaseException) -> TableToDxfError:
+    """Kataloğa girmeyen bir istisnayı gösterilebilir bir hataya çevirir.
+
+    Bu dal olmadan istisna arka plan iş parçacığıyla birlikte sessizce ölür:
+    `_result_queue`'ya hiçbir şey konmaz, `_finish_run` hiç çağrılmaz ve
+    pencere "Çalışıyor…" durumunda — Çalıştır düğmesi devre dışı, ilerleme
+    çubuğu dönerken — sonsuza kadar asılı kalır. Kullanıcının pencereyi
+    kapatmaktan başka çıkışı olmaz ve neyin yanlış gittiğini hiç öğrenemez.
+
+    Beklenmedik bir istisna bir kusurdur ve kusur gizlenmemeli: satır
+    `code=UNEXPECTED` ile rapor bölmesine düşer, traceback de arkasından
+    gelir — ama çalıştırma **biter**.
+    """
+    return TableToDxfError(
+        UNEXPECTED,
+        op="run",
+        reason=str(exc) or type(exc).__name__,
+        detail=type(exc).__name__,
+    )
 
 
 def _open_in_explorer(path: Path) -> None:

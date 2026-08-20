@@ -53,14 +53,14 @@ Implement feature F-[N] as described in DOCS/Features/F-[N].md.
 
 Before writing any code:
 1. Read F-[N].md completely — understand all acceptance criteria
-2. Read DOCS/Architecture/Architectural_Mandates.md §1, §2, §3
-3. Read src/services/_TEMPLATE/ for the service pattern
+2. Read CLAUDE.md -> Architectural Mandates (especially 1, 3, 4, 5)
+3. Read the module that will own the change; match its comment density and idiom
 4. Confirm your implementation plan in a brief summary
 
 Then implement:
-- Create the command class in src/commands/
-- Add the service method in src/services/[name]-service.ts
-- [Add handler / CLI command if applicable]
+- Put the logic in the layer that owns it (reader / geometry / writer — see CLAUDE.md pipeline)
+- Keep any new external dependency inside that single module
+- Surface new settings through config.py so CLI, --set and the UI form all get them at once
 
 Do NOT write tests yet — that's a separate task.
 Do NOT refactor unrelated code.
@@ -69,70 +69,67 @@ Do NOT build or commit.
 When done: state what you changed and what tests still need to be written.
 ```
 
-### Add a New Service
+### Add a New Setting
 
 ```
-Create a new service for [DOMAIN_NAME] following the template at src/services/_TEMPLATE/.
+Add a setting [NAME] to the [SECTION] section of config.py.
 
-This service should:
-- [Responsibility 1]
-- [Responsibility 2]
-- [Responsibility 3]
-
-Dependencies it needs (as interfaces):
-- [IRepository or similar]
-- [ILogger]
+Type: [float | int | bool | str | Literal[...] | Rgb]
+Default: [value] — must reproduce today's behaviour exactly (F-002 AC-1)
+Effect: [what it changes]
 
 Constraints:
-- Stateless (no instance variables holding business state)
-- All mutations wrapped in commands (do not mutate directly)
-- Validate inputs at the service boundary only if called from non-handler code; otherwise validation is at the handler
+- If the value is closed-ended, use Literal, not str. A Literal is validated for every
+  entry path at once (config file, --set, dedicated flag, UI form) and renders as a
+  combobox in the UI.
+- Add a validator to the section's validate() if the value has a valid range.
+- config.py stays pure data: no I/O, no logging, no odfpy/ezdxf/tkinter.
+- Add the label and help text to ui/fields.py.
+- Add the row to DOCS/Features/F-002.md and tabletodxf.example.toml.
 
-Do not write tests. Do not build.
+Do not write tests. Do not package.
 ```
 
 ---
 
 ## Test Generation
 
-### Write Unit Tests for a Service
+### Write Unit Tests for a Module
 
 ```
-Write unit tests for [ServiceName] in src/services/[name]-service.ts.
+Write unit tests for [module] in src/tabletodxf/[module].py.
 
-Test file location: tests/unit/services/[name]-service.test.ts
+Test file location: tests/unit/test_[module].py
 
 Rules:
-- Follow DOCS/Testing/TEST_STRATEGY.md strictly
-- Mock all dependencies (IRepository, ILogger, etc.) — no real I/O
-- Test names must describe behavior, not implementation
-- Cover: happy path, all error cases, all edge cases in the method
-- Use the factory helpers in tests/fixtures/ for test data
+- Follow DOCS/Testing/TEST_STRATEGY.md
+- No real I/O; use tmp_path when a file is genuinely needed
+- Test names must describe behaviour, not implementation
+- Cover: happy path, every error path (assert the catalog code), and the edge cases
+- Build sheet fixtures with tests/fixtures/ods_builder.py, never commit a binary .ods
 
-Do not test private methods. Do not test that mocks were called unless the call IS the behavior.
+Do not test private helpers unless the helper IS the behaviour under test.
 
-For each test, write a one-line comment explaining WHAT behavior it proves.
+For each test, write a one-line docstring explaining WHAT behaviour it proves — and for a
+regression test, what used to go wrong.
 ```
 
-### Write Integration Tests for a Handler
+### Write an End-to-End Pipeline Test
 
 ```
-Write integration tests for the [HTTP_METHOD] [/route] handler.
+Write an integration test for [behaviour] in tests/integration/test_pipeline.py.
 
-Test file: tests/integration/handlers/[route-name].test.ts
-
-These are integration tests — use:
-- A real (local) database seeded with fixtures
-- The full HTTP stack (not mocked handlers)
-- Real command execution (not mocked command manager)
+These run the real pipeline — no mocks:
+- Build the source sheet with tests/fixtures/ods_builder.py
+- Run it through convert() (or cli.main() when exit codes are the point)
+- Read the produced DXF back with ezdxf and assert on actual entities
 
 Cover:
-1. Happy path: valid request → correct response and DB state
-2. Validation error: missing required field → 400 response
-3. Not found: [entity] does not exist → 404 response
-4. [Any domain-specific error case]
+1. Happy path: the entity lands on the right layer with the right coordinates
+2. The error path: assert the catalog code AND that no file was left behind (AC-10)
+3. Determinism: same input twice -> identical output (AC-12)
 
-Use fixtures from tests/fixtures/ for setup. Reset DB state in beforeEach.
+Use the fixtures in tests/conftest.py for the font and the reference sheet.
 ```
 
 ---
